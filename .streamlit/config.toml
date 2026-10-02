@@ -1,0 +1,20 @@
+[theme]
+base = "light"
+primaryColor = "#2D4FD6"
+backgroundColor = "#F3F5F8"
+secondaryBackgroundColor = "#E8ECF2"
+textColor = "#1B2433"
+borderColor = "#D5DBE4"
+baseRadius = "0.4rem"
+font = "Schibsted Grotesk:https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&display=swap"
+headingFont = "Schibsted Grotesk:https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&display=swap"
+codeFont = "IBM Plex Mono:https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+
+[theme.sidebar]
+backgroundColor = "#1B2433"
+textColor = "#E8ECF2"
+secondaryBackgroundColor = "#26324A"
+borderColor = "#33415C"
+
+[client]
+toolbarMode = "viewer"
