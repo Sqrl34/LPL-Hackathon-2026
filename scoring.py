@@ -216,21 +216,51 @@ def _format_call(call):
     return f"--- Call {call['call_number']} ({call.get('date', 'unknown date')}) ---\n{call['transcript']}"
 
 
-def score_call(new_call, past_calls, client):
-    """Ask Sonnet to score the 5 signals for new_call against past_calls.
-
-    Returns {"signals", "people_mentioned", "summary"}. Raises on failure;
-    callers turn that into an "unavailable" result.
-    """
+def build_score_prompt(new_call, past_calls, client):
     past_text = "\n\n".join(_format_call(c) for c in past_calls) or "(No past calls. This is the baseline call; score only what stands out within this call.)"
-    prompt = (
+    return (
         f"CLIENT PROFILE:\nName: {client.get('name')}\nAge: {client.get('age')}\n"
         f"Trusted contact: {client.get('trusted_contact')}\nAdvisor: {client.get('advisor')}\n"
         f"Notes: {client.get('notes')}\n\n"
         f"PAST CALLS:\n{past_text}\n\n"
         f"NEW CALL:\n{_format_call(new_call)}"
     )
-    raw = _parse_json(converse(config.SONNET_MODEL_ID, RUBRIC_PROMPT, prompt, guardrail=True))
+
+
+def _converse_json(model_id, system, prompt):
+    """One retry if the model's reply isn't valid JSON."""
+    try:
+        return _parse_json(converse(model_id, system, prompt, guardrail=True))
+    except ValueError:  # includes json.JSONDecodeError
+        return _parse_json(converse(model_id, system, prompt + "\n\nReturn only the JSON object.", guardrail=True))
+
+
+def friendly_error(err):
+    code = ""
+    if hasattr(err, "response"):
+        code = err.response.get("Error", {}).get("Code", "")
+    name = type(err).__name__
+    if name in ("NoCredentialsError", "PartialCredentialsError") or code in (
+        "ExpiredToken", "ExpiredTokenException", "InvalidClientTokenId", "UnrecognizedClientException",
+    ):
+        return "AWS credentials missing or expired. Paste fresh event credentials (see README Going live)."
+    if code == "AccessDeniedException":
+        return "Access denied. Check region us-east-1 and model access for this inference profile."
+    if code == "ValidationException" and "model" in str(err).lower():
+        return f"Invalid model ID; use the inference profile ID. ({err})"
+    if code == "ThrottlingException":
+        return "Bedrock throttled. Wait a minute; only one teammate should call Bedrock at a time."
+    return str(err)
+
+
+def score_call(new_call, past_calls, client):
+    """Ask Sonnet to score the 5 signals for new_call against past_calls.
+
+    Returns {"signals", "people_mentioned", "summary"}. Raises on failure;
+    callers turn that into an "unavailable" result.
+    """
+    prompt = build_score_prompt(new_call, past_calls, client)
+    raw = _converse_json(config.SONNET_MODEL_ID, RUBRIC_PROMPT, prompt)
 
     signals = {}
     for name in SIGNALS:
@@ -318,10 +348,10 @@ def draft_next_steps(result, client, transcript=""):
         "hold_note": None,
     }
     try:
-        raw = _parse_json(converse(config.HAIKU_MODEL_ID, NEXT_STEPS_PROMPT, prompt, guardrail=True))
+        raw = _converse_json(config.HAIKU_MODEL_ID, NEXT_STEPS_PROMPT, prompt)
     except Exception as err:
         steps["advisor_script"] = "Drafts unavailable, write the follow-up manually."
-        steps["error"] = str(err)
+        steps["error"] = friendly_error(err)
         return steps
 
     steps["advisor_script"] = _scrub(raw.get("advisor_script"))
@@ -342,7 +372,7 @@ def analyze_new_call(client, past_calls, past_results, new_call, people_by_call=
     try:
         scored = score_call(new_call, past_calls, client)
     except Exception as err:
-        return unavailable_result(new_call, err)
+        return unavailable_result(new_call, friendly_error(err))
 
     total, level = apply_rules(scored["signals"], past_results)
 
