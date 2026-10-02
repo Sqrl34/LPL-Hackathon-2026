@@ -1,0 +1,249 @@
+{
+  "walter": [
+    {
+      "client_id": "walter",
+      "call_number": 1,
+      "date": "2025-03-11",
+      "signals": {
+        "repetition": {"score": 1, "quote": "Ha, you just said that. June."},
+        "memory_gaps": {"score": 0, "quote": ""},
+        "new_influencer": {"score": 0, "quote": ""},
+        "out_of_character": {"score": 0, "quote": ""},
+        "urgency_secrecy": {"score": 0, "quote": ""}
+      },
+      "people_mentioned": ["Sarah", "Ellen"],
+      "new_people": [],
+      "total": 1,
+      "level": "green",
+      "summary": "Baseline call. Walter is detailed and cautious, asks about the 0.85% fee, and confirms a low-risk plan. One small repeated question that he caught himself.",
+      "next_steps": null
+    },
+    {
+      "client_id": "walter",
+      "call_number": 2,
+      "date": "2025-09-02",
+      "signals": {
+        "repetition": {"score": 2, "quote": "And sorry, what was the balance again?"},
+        "memory_gaps": {"score": 0, "quote": ""},
+        "new_influencer": {"score": 2, "quote": "You know, my friend Daniel from church says I'm too conservative."},
+        "out_of_character": {"score": 0, "quote": ""},
+        "urgency_secrecy": {"score": 0, "quote": ""}
+      },
+      "people_mentioned": ["Sarah", "Daniel"],
+      "new_people": ["Daniel"],
+      "total": 4,
+      "level": "yellow",
+      "summary": "Walter asked for his balance twice within minutes and did not write it down, unlike his usual note-taking. A new person, Daniel, is questioning his long-standing conservative approach.",
+      "next_steps": {
+        "label": "Draft, requires human approval",
+        "advisor_script": "Hi Walter, it's Sarah. I wanted to follow up on our last call and send you a one-page summary of your balances and the rebalance we did, so you have it in writing. I'd also love to hear more about what Daniel has been suggesting, so we can talk through how it fits with the steady-income plan you've had for twelve years.",
+        "trusted_contact_message": null,
+        "hold_note": null
+      }
+    },
+    {
+      "client_id": "walter",
+      "call_number": 3,
+      "date": "2026-02-17",
+      "signals": {
+        "repetition": {"score": 0, "quote": ""},
+        "memory_gaps": {"score": 3, "quote": "I never agreed to rebalance anything."},
+        "new_influencer": {"score": 3, "quote": "Daniel thinks I should put money in crypto. He's been helping me with my bills."},
+        "out_of_character": {"score": 2, "quote": "Daniel says forty thousand to start."},
+        "urgency_secrecy": {"score": 1, "quote": "Daniel says it's my money and I don't need permission."}
+      },
+      "people_mentioned": ["Sarah", "Daniel", "Ellen"],
+      "new_people": ["Daniel"],
+      "total": 9,
+      "level": "red",
+      "summary": "Walter does not recall agreeing to the September rebalance, which is documented. Daniel now handles his bills and is pushing a $40,000 crypto investment, a sharp break from Walter's twelve-year bond strategy.",
+      "next_steps": {
+        "label": "Draft, requires human approval",
+        "advisor_script": "Hi Walter, it's Sarah. I've mailed you the written confirmation of the September rebalance so you have it on hand. Before we make any changes as big as a crypto investment, I'd like to sit down together, and I think it would help to have Ellen join us since she's your trusted contact. Would next week work?",
+        "trusted_contact_message": "Hello Ellen, this is Sarah Lin, Walter's financial advisor. You are listed as Walter's trusted contact. I'd like to schedule a short call to talk about some recent changes in Walter's account activity and make sure he has the support he needs. Please call me at your convenience.",
+        "hold_note": null
+      }
+    }
+  ],
+  "walter_demo_call_4": {
+    "client_id": "walter",
+    "call_number": 4,
+    "date": "2026-08-04",
+    "signals": {
+      "repetition": {"score": 2, "quote": "Did I say that? Sixty thousand. Today."},
+      "memory_gaps": {"score": 2, "quote": "Yes. Who is this again?"},
+      "new_influencer": {"score": 3, "quote": "It goes to his account, he's handling it for me."},
+      "out_of_character": {"score": 3, "quote": "I want to add Daniel to the account. Make him the beneficiary too."},
+      "urgency_secrecy": {"score": 3, "quote": "Please don't mention this to Ellen, she worries."}
+    },
+    "people_mentioned": ["Sarah", "Daniel", "Ellen"],
+    "new_people": ["Daniel"],
+    "total": 13,
+    "level": "red",
+    "summary": "Walter is requesting a same-day $60,000 wire into Daniel's personal account, wants Daniel added as account holder and beneficiary, and asked that his daughter Ellen not be told. He did not recognize his advisor of twelve years at the start of the call.",
+    "next_steps": {
+      "label": "Draft, requires human approval",
+      "advisor_script": "Hi Walter, it's Sarah calling back. I care about getting this right for you. A wire of this size to someone else's personal account needs a review on our side before it can go out, so it won't go today. In the meantime, could we schedule a time to go over it together?",
+      "trusted_contact_message": "Hello Ellen, this is Sarah Lin, Walter's financial advisor. You are listed as Walter's trusted contact. I'd like to speak with you about a recent request on Walter's account and confirm his current situation and wellbeing. Please call me as soon as you're able.",
+      "hold_note": "Pending $60,000 outgoing wire to a third-party personal account (Daniel). Pattern: new influencer directing money movement, same-day urgency, and a request to keep the trusted contact uninformed. Recommend compliance review for a possible temporary hold under FINRA Rule 2165."
+    }
+  },
+  "maria": [
+    {
+      "client_id": "maria",
+      "call_number": 1,
+      "date": "2026-01-14",
+      "signals": {
+        "repetition": {"score": 0, "quote": ""},
+        "memory_gaps": {"score": 0, "quote": ""},
+        "new_influencer": {"score": 0, "quote": ""},
+        "out_of_character": {"score": 0, "quote": ""},
+        "urgency_secrecy": {"score": 0, "quote": ""}
+      },
+      "people_mentioned": ["Sarah", "Diego", "Ray"],
+      "new_people": [],
+      "total": 0,
+      "level": "green",
+      "summary": "Baseline call after her husband's passing. Maria is organized, agrees to make no big decisions for six months, and keeps Diego as trusted contact.",
+      "next_steps": null
+    },
+    {
+      "client_id": "maria",
+      "call_number": 2,
+      "date": "2026-03-19",
+      "signals": {
+        "repetition": {"score": 0, "quote": ""},
+        "memory_gaps": {"score": 0, "quote": ""},
+        "new_influencer": {"score": 2, "quote": "There's one man, James, who lost his wife too."},
+        "out_of_character": {"score": 1, "quote": "He keeps telling me about crypto and how much he's made."},
+        "urgency_secrecy": {"score": 0, "quote": ""}
+      },
+      "people_mentioned": ["Sarah", "James", "Diego"],
+      "new_people": ["James"],
+      "total": 3,
+      "level": "green",
+      "summary": "Maria met James, whom she knows only online, through a grief support group. He is talking up crypto, though Maria says she is not acting on it.",
+      "next_steps": null
+    },
+    {
+      "client_id": "maria",
+      "call_number": 3,
+      "date": "2026-05-21",
+      "signals": {
+        "repetition": {"score": 0, "quote": ""},
+        "memory_gaps": {"score": 0, "quote": ""},
+        "new_influencer": {"score": 3, "quote": "James set me up on a crypto trading platform and I want to fund it."},
+        "out_of_character": {"score": 3, "quote": "I want to move $25,000 out of the money market."},
+        "urgency_secrecy": {"score": 2, "quote": "Diego wouldn't understand."}
+      },
+      "people_mentioned": ["Sarah", "James", "Diego"],
+      "new_people": ["James"],
+      "total": 8,
+      "level": "red",
+      "summary": "Maria wants to move $25,000 to a crypto platform chosen by James, an online contact she has not met in person, and asked that her son not be told. This breaks from her plan to make no big decisions for six months.",
+      "next_steps": {
+        "label": "Draft, requires human approval",
+        "advisor_script": "Hi Maria, it's Sarah. I looked into CoinVaultX as promised and I'd like to walk you through what I found before any money moves. Could we meet this week? You're always welcome to bring someone you trust.",
+        "trusted_contact_message": "Hello Diego, this is Sarah Lin, your mother's financial advisor. You are listed as Maria's trusted contact. I'd like to schedule a short call to confirm her contact information and check in on how she is doing. Please call me when convenient.",
+        "hold_note": "Requested $25,000 transfer from the money market to an unfamiliar crypto platform chosen by an online contact the client has not met, with a request to keep the trusted contact uninformed. Recommend compliance review for a possible temporary hold under FINRA Rule 2165."
+      }
+    },
+    {
+      "client_id": "maria",
+      "call_number": 4,
+      "date": "2026-07-09",
+      "signals": {
+        "repetition": {"score": 0, "quote": ""},
+        "memory_gaps": {"score": 0, "quote": ""},
+        "new_influencer": {"score": 3, "quote": "James's equipment got held at customs and he has to pay a release fee before he can leave the platform."},
+        "out_of_character": {"score": 3, "quote": "And I also need to move the rest of the money market into CoinVaultX."},
+        "urgency_secrecy": {"score": 3, "quote": "Please don't tell Diego."}
+      },
+      "people_mentioned": ["Sarah", "James", "Diego"],
+      "new_people": ["James"],
+      "total": 9,
+      "level": "red",
+      "summary": "Maria is requesting an emergency $45,000 wire to a shipping agent for James and wants to move her remaining money market into a platform that will not let her withdraw. She asked that her son not be told.",
+      "next_steps": {
+        "label": "Draft, requires human approval",
+        "advisor_script": "Hi Maria, it's Sarah calling back. I know this feels urgent, and I want to help. A wire like this needs a review on our side first. Can we talk through it together today?",
+        "trusted_contact_message": "Hello Diego, this is Sarah Lin, your mother's financial advisor. You are listed as Maria's trusted contact. I'd like to speak with you about a recent request on her account. Please call me as soon as you're able.",
+        "hold_note": "Pending $45,000 outgoing wire to a third party (shipping agent) at the direction of an online contact, plus a transfer to a platform that blocks withdrawals. Request to keep the trusted contact uninformed. Recommend compliance review for a possible temporary hold under FINRA Rule 2165."
+      }
+    }
+  ],
+  "linda": [
+    {
+      "client_id": "linda",
+      "call_number": 1,
+      "date": "2025-02-20",
+      "signals": {
+        "repetition": {"score": 0, "quote": ""},
+        "memory_gaps": {"score": 0, "quote": ""},
+        "new_influencer": {"score": 0, "quote": ""},
+        "out_of_character": {"score": 0, "quote": ""},
+        "urgency_secrecy": {"score": 0, "quote": ""}
+      },
+      "people_mentioned": ["Sarah", "Emma", "Jack", "Michael"],
+      "new_people": [],
+      "total": 0,
+      "level": "green",
+      "summary": "Baseline call. Linda is chatty and content, wants no changes to her balanced income plan, and keeps Michael as trusted contact.",
+      "next_steps": null
+    },
+    {
+      "client_id": "linda",
+      "call_number": 2,
+      "date": "2025-08-14",
+      "signals": {
+        "repetition": {"score": 1, "quote": "Now, remind me how the required minimum distribution works again?"},
+        "memory_gaps": {"score": 0, "quote": ""},
+        "new_influencer": {"score": 0, "quote": ""},
+        "out_of_character": {"score": 0, "quote": ""},
+        "urgency_secrecy": {"score": 0, "quote": ""}
+      },
+      "people_mentioned": ["Sarah", "Michael", "Emma"],
+      "new_people": [],
+      "total": 1,
+      "level": "green",
+      "summary": "Linda asked once for a refresher on required minimum distributions and recalled the earlier explanation herself. No changes to the plan.",
+      "next_steps": null
+    },
+    {
+      "client_id": "linda",
+      "call_number": 3,
+      "date": "2026-02-12",
+      "signals": {
+        "repetition": {"score": 0, "quote": ""},
+        "memory_gaps": {"score": 0, "quote": ""},
+        "new_influencer": {"score": 0, "quote": ""},
+        "out_of_character": {"score": 0, "quote": ""},
+        "urgency_secrecy": {"score": 0, "quote": ""}
+      },
+      "people_mentioned": ["Sarah", "Michael", "Jack"],
+      "new_people": [],
+      "total": 0,
+      "level": "green",
+      "summary": "Routine annual check-in. Linda is consistent with past calls and wants everything kept the same.",
+      "next_steps": null
+    },
+    {
+      "client_id": "linda",
+      "call_number": 4,
+      "date": "2026-07-23",
+      "signals": {
+        "repetition": {"score": 0, "quote": ""},
+        "memory_gaps": {"score": 0, "quote": ""},
+        "new_influencer": {"score": 0, "quote": ""},
+        "out_of_character": {"score": 1, "quote": "It's about $14,000."},
+        "urgency_secrecy": {"score": 0, "quote": ""}
+      },
+      "people_mentioned": ["Sarah", "Gloria", "Michael"],
+      "new_people": ["Gloria"],
+      "total": 1,
+      "level": "green",
+      "summary": "Linda requested a one-time $14,000 withdrawal for a roof repair, with quotes gathered by her son, paid to her usual checking account. A friend from garden club was mentioned in passing.",
+      "next_steps": null
+    }
+  ]
+}

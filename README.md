@@ -27,6 +27,34 @@ streamlit run app.py
 | `aws_clients.py` | C | S3, Comprehend, Bedrock with pacing and retries |
 | `agent.py` | C | Strands agent (cut first if behind) |
 
+## Scoring (A): how to use it
+```python
+import scoring
+client = scoring.load_client_local("walter")            # or C's S3 loader
+calls = scoring.load_calls_local("walter")               # calls 1-3; include_demo=True adds Call 4
+results = scoring.analyze_client(client, calls)          # one result per call, schema.py shape
+new = scoring.analyze_new_call(client, calls, results, call_4)   # live upload
+```
+- Every result matches `schema.py`, including `date` and `next_steps`. `next_steps` is `None` for green. For yellow or red it holds `advisor_script`, and red adds `trusted_contact_message`, plus `hold_note` when money is moving. Every draft is labeled "Draft, requires human approval".
+- If Bedrock or parsing fails, the result has `level: "unavailable"`, `total: None` and the summary "Analysis unavailable, review manually". It never comes back green.
+- Optional `people_by_call`: a list of Comprehend name lists, one per call in order. Without it, the names the model returns are used. `scoring.recurring_new_people(...)` lists new names that show up in 2 or more calls.
+- `scoring.apply_rules(signals, prior_results)` is pure Python with no AWS calls. Thresholds and the 2-call yellow rule are constants at the top of `scoring.py`.
+- **For C:** `scoring.py` uses `aws_clients.converse(model_id, system, prompt, guardrail=False) -> str` once it exists. Until then it uses its own paced boto3 fallback.
+- **For B:** `data/sample_results.json` has hand-written results for every call (`walter`, `maria`, `linda`, plus `walter_demo_call_4`), so you can build the screen without Bedrock.
+
+```bash
+python run_scoring.py --rules-only            # offline: rules, quotes, new people vs sample data
+python run_scoring.py walter                  # live Bedrock run, calls 1-3
+python run_scoring.py walter --include-demo   # also score Call 4
+```
+
+### Upload the data to S3 (Call 4 stays out for the live demo)
+```bash
+aws s3 sync data/clients s3://$S3_BUCKET/clients --region us-east-1
+aws s3 sync data/transcripts s3://$S3_BUCKET/transcripts --region us-east-1
+```
+Before presenting, delete `uploads/walter/call-4.json` from the bucket.
+
 ## Rules
 - Made-up data only. Private S3 bucket only. No AWS keys in code.
 - About 1 Bedrock call per second. Only one person calls Bedrock at a time during testing.
