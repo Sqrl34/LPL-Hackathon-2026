@@ -1,26 +1,5 @@
-# Secrets and local config: never commit
 .env
-.env.*
-!.env.example
-.aws/
-*.pem
-
-# Python
+.venv/
 __pycache__/
 *.py[cod]
-.venv/
-venv/
-.pytest_cache/
-
-# Streamlit
-.streamlit/secrets.toml
-
-# OS / editors
 .DS_Store
-.vscode/
-.idea/
-
-# Demo recordings and build output
-*.mp4
-*.mov
-*.zip
