@@ -30,4 +30,12 @@ EXAMPLE_RESULT = {
     "total": 9,
     "level": "red",
     "summary": "Plain-language summary of what changed, no diagnosis.",
+    "date": "2026-02-17",
+    # None for green; drafted by Haiku for yellow/red.
+    "next_steps": {
+        "label": "Draft, requires human approval",
+        "advisor_script": "...",
+        "trusted_contact_message": "...",  # red only, else None
+        "hold_note": "...",  # red with money moving only, else None
+    },
 }
