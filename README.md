@@ -96,6 +96,24 @@ python aws_setup.py --guardrail                                   # creates or r
 - **Without AWS** the screen shows `data/sample_results.json`, with a banner saying these are hand-written sample results. The sidebar toggle switches between the two.
 - **Before presenting:** click **Analyze all clients** once so switching clients is instant. A first run is about 30 Bedrock calls, paced at about one per second.
 
+## Agent and permissions (C, Step 8)
+```bash
+python agent.py walter "What changed in Walter's last call?"   # one Strands agent on Sonnet, 3 tools
+python agent.py walter "Does Walter have dementia?"            # the guardrail refuses
+python aws_setup.py --iam-policy                                # writes iam/second-look-runtime-policy.json, validates it
+```
+- **Tools:** `get_call_history`, `compare_to_baseline` and `draft_next_steps` take a client ID (and optionally a call number) and reuse `scoring.py`. They never raise. On failure they return "Analysis unavailable, review manually".
+- **Guardrail:** the agent's model has the guardrail attached with `guardrail_latest_message=True`, so the input check covers only the advisor's question, not transcripts returned by tools. Every answer is checked on output.
+- **Pacing and retries:** every agent model call waits on the same gate as the rest of the app (`aws_clients.wait_for_bedrock_slot`). Throttling retries back off for 2 to 16 seconds, up to 4 attempts.
+- **IAM:** the generated policy allows only reading `clients/`, `transcripts/` and `uploads/`, writing and deleting `uploads/`, invoking our two inference profiles (and their models only through those profiles), our one guardrail, and Comprehend `DetectEntities` in us-east-1. Screenshot it for the deck. If the event's participant role can't be changed, the policy still documents exactly what production would grant.
+- **The screen's Ask box uses the agent** in live mode: `agent.ask(client_id, question, client=..., calls=..., results=...)`. Passing what the screen shows makes the tools reuse those exact scores and drafts, so the agent never disagrees with the screen and doesn't re-score. It returns `{"answer", "blocked", "tools_used", "error"}`. If the agent can't run, the Ask box falls back to a direct guardrailed Sonnet call.
+
+## Tests
+```bash
+python tests/run_all.py     # every offline suite; uses fake keys, so it never calls AWS
+```
+These cover the rules and quotes, the pipeline with fake Bedrock, every AWS request shape (checked against botocore's API definitions), the Strands agent loop, and click-throughs of the screen in sample mode and simulated live mode. The live check is `python run_scoring.py --all --no-next-steps --targets` (about 22 Bedrock calls).
+
 ## Rules
 - Made-up data only. Private S3 bucket only. No AWS keys in code.
 - About 1 Bedrock call per second. Only one person calls Bedrock at a time during testing.

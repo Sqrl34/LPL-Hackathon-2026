@@ -186,6 +186,11 @@ def _wait_for_bedrock_slot() -> None:
         _last_bedrock_call = time.monotonic()
 
 
+def wait_for_bedrock_slot() -> None:
+    """Public pacing gate, so Bedrock calls made by other libraries (the Strands agent) share the limit."""
+    _wait_for_bedrock_slot()
+
+
 _RETRYABLE = {"ThrottlingException", "ServiceUnavailableException", "ModelNotReadyException"}
 
 

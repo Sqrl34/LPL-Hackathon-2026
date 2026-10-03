@@ -18,6 +18,7 @@ import json
 import plotly.graph_objects as go
 import streamlit as st
 
+import agent
 import aws_clients
 import config
 import scoring
@@ -306,8 +307,12 @@ def receive_call(state, client_id, new_call, from_note_taker):
     st.rerun()
 
 
-def answer_question(client, results, question):
-    """Returns (answer, kind, note). kind is "answer", "blocked" or "error"."""
+def answer_question(client, calls, results, question, source):
+    """Returns (answer, kind, note). kind is "answer", "blocked" or "error".
+
+    Live with a guardrail: the Strands agent answers, using the scores on screen. If the agent
+    itself can't run, a direct guardrailed Sonnet call answers instead.
+    """
     asks_diagnosis = any(term in question.lower() for term in DIAGNOSIS_TERMS)
     if not live:
         if asks_diagnosis:
@@ -317,6 +322,15 @@ def answer_question(client, results, question):
                 "Sample mode: this is the latest call's summary, not a live answer.")
     if not config.GUARDRAIL_ID and asks_diagnosis:
         return LOCAL_REFUSAL, "blocked", "Local refusal: GUARDRAIL_ID isn't set, so the Bedrock Guardrail isn't connected yet."
+
+    if config.GUARDRAIL_ID:
+        reply = agent.ask(client["client_id"], question, client=client, calls=calls, results=results, source=source)
+        if reply["blocked"]:
+            return reply["answer"], "blocked", "Blocked by the Bedrock Guardrail before the agent used any tools."
+        if not reply["error"]:
+            used = ", ".join(reply["tools_used"]) or "no tools"
+            return reply["answer"], "answer", f"Answered by the Second Look agent (Strands) using: {used}."
+        # The agent couldn't run; fall through to the direct guardrailed call below.
 
     lines = [f"Client: {client['name']}. Advisor: {client['advisor']}. Trusted contact: {client['trusted_contact']}.",
              "Analyzed calls, oldest first:"]
@@ -653,8 +667,9 @@ with ask_col:
                                  placeholder=f"What changed in {first_name(client)}'s last call?")
         asked = st.form_submit_button("Ask")
     if asked and question.strip():
-        with st.spinner("Asking Claude, with the guardrail checking the question and the answer"):
-            st.session_state.answers[client_id] = (question.strip(), *answer_question(client, results, question.strip()))
+        with st.spinner("The Second Look agent is checking the calls (the guardrail checks the question and the answer)"):
+            st.session_state.answers[client_id] = (
+                question.strip(), *answer_question(client, calls, results, question.strip(), state["source"]))
     last = st.session_state.answers.get(client_id)
     if last:
         q, answer, kind, note = last

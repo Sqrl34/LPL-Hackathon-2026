@@ -1,0 +1,77 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListTeamBucket",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::second-look-lpl-432810293903"
+    },
+    {
+      "Sid": "ReadTranscripts",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": [
+        "arn:aws:s3:::second-look-lpl-432810293903/clients/*",
+        "arn:aws:s3:::second-look-lpl-432810293903/transcripts/*",
+        "arn:aws:s3:::second-look-lpl-432810293903/uploads/*"
+      ]
+    },
+    {
+      "Sid": "WriteDemoUploadsOnly",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::second-look-lpl-432810293903/uploads/*"
+    },
+    {
+      "Sid": "InvokeSonnetAndHaikuProfiles",
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": [
+        "arn:aws:bedrock:us-east-1:432810293903:inference-profile/us.anthropic.claude-sonnet-4-6",
+        "arn:aws:bedrock:us-east-1:432810293903:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+      ]
+    },
+    {
+      "Sid": "InvokeModelsOnlyThroughThoseProfiles",
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": [
+        "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+        "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6",
+        "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+        "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-6",
+        "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+        "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-6"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "bedrock:InferenceProfileArn": [
+            "arn:aws:bedrock:us-east-1:432810293903:inference-profile/us.anthropic.claude-sonnet-4-6",
+            "arn:aws:bedrock:us-east-1:432810293903:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "UseOurGuardrail",
+      "Effect": "Allow",
+      "Action": "bedrock:ApplyGuardrail",
+      "Resource": "arn:aws:bedrock:us-east-1:432810293903:guardrail/1qx4nvvreda6"
+    },
+    {
+      "Sid": "FindPeopleInTranscripts",
+      "Effect": "Allow",
+      "Action": "comprehend:DetectEntities",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    }
+  ]
+}

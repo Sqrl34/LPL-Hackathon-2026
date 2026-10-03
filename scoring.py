@@ -40,7 +40,7 @@ Do not name, suggest, or speculate about any medical or mental health condition.
 Score each of these 5 signals from 0 (none) to 3 (strong), based only on changes compared to the client's own past behavior:
 - repetition: repeating the same question or story within this call. Ignore asking once for something to be explained again. 1 = repeats something but notices or corrects it right away; 2 = asks the same question again within minutes without noticing; 3 = repeats the same question or story three or more times.
 - memory_gaps: contradicting or forgetting decisions recorded in past calls, or not recognizing long-known people. Ignore forgetting exact dates.
-- new_influencer: a person who was not part of the client's life in the first (baseline) call and now shapes financial decisions. Keep scoring that person in every later call where their influence continues, even if they were already mentioned in an earlier call. A new name mentioned once in passing scores 0. 1 = a new person comes up more than once but has no opinions about the client's money; 2 = a new person is giving opinions or advice about the client's money or strategy, even if the client hasn't acted on it yet; 3 = a new person is directing specific money moves, handling the client's bills or accounts, or would receive money.
+- new_influencer: a person who was not part of the client's life in the first (baseline) call and now comes up in the client's money conversations. Keep scoring that person in every later call where their influence continues, even if they were already mentioned in an earlier call. A new name mentioned once in passing scores 0. 1 = a new person comes up more than once but has no opinions about the client's money; 2 = a new person is giving opinions or advice about the client's money or strategy, even if the client hasn't acted on it yet; 3 = a new person is directing specific money moves, handling the client's bills or accounts, or would receive money.
 - out_of_character: requests that clash with the client's history and style, such as speculative investments, adding someone to the account or as beneficiary, or unusually large withdrawals. Changes with a clear normal reason (like a home repair paid to their own account) score 0 or 1.
 - urgency_secrecy: pressure to act fast, or asking to hide things from family or the trusted contact. Normal deadlines like a tax bill score 0.
 For every score above 0, include a short direct quote copied exactly, word for word, from the CLIENT's lines in the NEW call as evidence. Copy one continuous passage; do not join separate sentences with "...". For a score of 0, use an empty quote.
@@ -49,7 +49,8 @@ Return only JSON, no other text, in this format:
 {"signals": {"repetition": {"score": 0, "quote": ""}, "memory_gaps": {"score": 0, "quote": ""}, "new_influencer": {"score": 0, "quote": ""}, "out_of_character": {"score": 0, "quote": ""}, "urgency_secrecy": {"score": 0, "quote": ""}}, "people_mentioned": [], "summary": "One or two plain-language sentences on what changed versus past calls."}"""
 
 NEXT_STEPS_PROMPT = """You help a financial advisor follow up with a client whose recent calls show warning signs of possible financial exploitation or vulnerability.
-Do not name, suggest, or speculate about any medical or mental health condition. Do not accuse anyone. Keep a warm, respectful tone.
+Do not name, suggest, or speculate about any medical or mental health condition, and do not comment on the client's capacity or competence. Do not accuse anyone. Keep a warm, respectful tone.
+These are drafts only: never say that anything has been sent, notified, initiated, scheduled, or done.
 Write short drafts a human will review before anything is sent:
 - advisor_script: what the advisor could say on a check-in call with the client (3 to 5 sentences).
 - trusted_contact_message: a brief message to the client's trusted contact asking to talk. Do not share account details or balances.
@@ -174,6 +175,57 @@ def quote_in_transcript(quote, transcript):
         if line.strip() and not line.lower().lstrip().startswith("advisor:")
     )
     return any(re.search(pattern, _normalize(text)) for text in (transcript, client_only))
+
+
+def verify_quote(quote, transcript):
+    """Return the quote if the client really said it, else "".
+
+    Models often stitch real sentences together out of order or skip text between them.
+    If every sentence is in the transcript, keep them, in the order they were said,
+    with "…" between them. One invented sentence and the whole quote is rejected.
+    """
+    if quote_in_transcript(quote, transcript):
+        return quote
+    # Sentence by sentence, every one must be the client's own words (advisor lines removed).
+    client_only = "\n".join(
+        line for line in transcript.splitlines()
+        if line.strip() and not line.lower().lstrip().startswith("advisor:")
+    )
+    sentences = [s.strip(" \"'") for s in re.split(r"(?<=[.!?])\s+", quote.strip(" \"'")) if s.strip(" \"'")]
+    if len(sentences) < 2 or not all(quote_in_transcript(s, client_only) for s in sentences):
+        return ""
+    text = _normalize(client_only)
+
+    def said_at(sentence):
+        found = text.find(_ELLIPSIS.split(_normalize(sentence))[0].strip(" \"'.,"))
+        return found if found >= 0 else len(text)
+
+    ordered = sorted(dict.fromkeys(sentences), key=said_at)
+    joined = ordered[0]
+    for sentence in ordered[1:]:
+        together = f"{joined} {sentence}"
+        joined = together if quote_in_transcript(together, client_only) else f"{joined} … {sentence}"
+    return joined
+
+
+_DONE_CLAIM = re.compile(
+    r"\b(initiated|already (?:contacted|notified|sent|called|reached)|"
+    r"(?:has|have|was|were) been (?:sent|notified|contacted|scheduled|completed|placed|initiated)|"
+    r"(?:notification|outreach|message|hold) (?:sent|completed|placed|scheduled))\b",
+    re.IGNORECASE,
+)
+_CAPACITY = re.compile(r"\b(?:capacity|competen\w*)\b", re.IGNORECASE)
+
+
+def _tidy_draft(text):
+    """Drafts must not claim anything was done, or judge the client's capacity. Enforced, not just asked."""
+    if not text:
+        return text
+    text = re.sub(r"\s+(?:and|or)\s+(?:mental\s+)?(?:capacity|competence)\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(?:mental\s+)?(?:capacity|competence)\s+(?:and|or)\s+", "", text, flags=re.IGNORECASE)
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    kept = [s for s in sentences if not _DONE_CLAIM.search(s) and not _CAPACITY.search(s)]
+    return " ".join(kept) if kept else None
 
 
 def _scrub(text):
@@ -307,9 +359,12 @@ def score_call(new_call, past_calls, client):
         except (TypeError, ValueError):
             score = 0
         quote = (item.get("quote") or "").strip()
-        if score > 0 and not quote_in_transcript(quote, new_call["transcript"]):
-            unverified.append({"signal": name, "score": score, "quote": quote})
-            score, quote = 0, ""
+        if score > 0:
+            verified = verify_quote(quote, new_call["transcript"])
+            if not verified:
+                unverified.append({"signal": name, "score": score, "quote": quote})
+                score = 0
+            quote = verified
         if score == 0:
             quote = ""
         signals[name] = {"score": score, "quote": quote}
@@ -405,11 +460,11 @@ def draft_next_steps(result, client, transcript=""):
         steps["error"] = friendly_error(err)
         return steps
 
-    steps["advisor_script"] = _scrub(raw.get("advisor_script"))
+    steps["advisor_script"] = _tidy_draft(_scrub(raw.get("advisor_script")))
     if is_red:
-        steps["trusted_contact_message"] = _scrub(raw.get("trusted_contact_message"))
+        steps["trusted_contact_message"] = _tidy_draft(_scrub(raw.get("trusted_contact_message")))
     if moving:
-        steps["hold_note"] = _scrub(raw.get("hold_note"))
+        steps["hold_note"] = _tidy_draft(_scrub(raw.get("hold_note")))
 
     keys = [k for k in ("advisor_script", "trusted_contact_message", "hold_note") if steps[k]]
     checked, blocked = guard_output([steps[k] for k in keys])
