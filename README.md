@@ -1,123 +1,147 @@
 # Second Look
 
-An AI tool for LPL advisors. It notices when a client's behavior across calls starts changing in ways that put their money at risk, such as repeated questions, forgotten decisions, or a new "friend" pushing urgent moves. It flags the warning signs with quotes as evidence. The AI finds evidence, fixed Python rules set the risk color, and a human decides what to do. It never diagnoses.
+Second Look is an AI-assisted review tool for financial advisors. It compares a client's behavior across calls and surfaces changes that may put the client's money at risk, including repeated questions, forgotten decisions, or pressure from a newly mentioned person.
 
-LPL Financial University Hackathon 2026.
+The system provides transcript quotes as evidence. AI extracts signals, deterministic Python rules assign the risk level, and the advisor makes the final decision. Second Look does not provide medical diagnoses.
 
-## Stack
-Amazon S3 · Amazon Bedrock (Claude Sonnet 4.6, Claude Haiku 4.5) · Bedrock Guardrails · Amazon Comprehend · Streamlit · Plotly · Strands Agents. Region: **us-east-1** only.
+## Technology
+
+- Amazon S3 stores client records and call transcripts.
+- Amazon Bedrock runs Claude Sonnet 4.6 for analysis and Claude Haiku 4.5 for draft next steps.
+- Amazon Bedrock Guardrails blocks diagnostic language and masks sensitive account information.
+- Amazon Comprehend identifies people mentioned in transcripts.
+- Streamlit provides the web interface.
+- Strands Agents powers the advisor question-and-answer workflow.
+
+All AWS services run in `us-east-1`.
 
 ## Setup
+
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in bucket, model IDs, guardrail (.env is git-ignored)
-# AWS credentials: terminal or local .env only, never in code (see "Going live")
+cp .env.example .env
 streamlit run app.py
 ```
 
-## Layout
-| Path | Owner | What |
-|---|---|---|
-| `data/` | A | Made-up clients and transcripts (backup copy of the S3 bucket) |
-| `data/demo/` | A | Walter's Call 4, kept aside for the live upload |
-| `schema.py` | all | Shared result format, so change it only after telling the team |
-| `scoring.py` | A | Bedrock scoring, risk rules, next-step drafts |
-| `app.py` | B | Streamlit screen |
-| `aws_clients.py` | C | S3, Comprehend, Bedrock with pacing and retries |
-| `agent.py` | C | Strands agent (cut first if behind) |
+The application can run without AWS by using the local sample data. To use live AWS services, configure these values in the local `.env` file:
 
-## Scoring (A): how to use it
+```dotenv
+AWS_REGION=us-east-1
+S3_BUCKET=your-private-bucket
+SONNET_MODEL_ID=your-sonnet-inference-profile-id
+HAIKU_MODEL_ID=your-haiku-inference-profile-id
+GUARDRAIL_ID=your-guardrail-id
+GUARDRAIL_VERSION=DRAFT
+```
+
+Provide AWS credentials either through the standard AWS credential chain or as temporary environment variables. Never commit credentials or place them in `.env.example`.
+
+```bash
+export AWS_ACCESS_KEY_ID='...'
+export AWS_SECRET_ACCESS_KEY='...'
+export AWS_SESSION_TOKEN='...'
+export AWS_REGION='us-east-1'
+```
+
+Verify the live AWS connection:
+
+```bash
+.venv/bin/python scripts/verify_aws.py
+```
+
+## Running the application
+
+```bash
+source .venv/bin/activate
+streamlit run app.py
+```
+
+In live mode, the application loads transcripts from S3, uses Comprehend to identify people, and sends call evidence to Bedrock for analysis. Results are cached in memory to avoid unnecessary model calls. Uploaded calls are stored under `uploads/` in S3 before analysis.
+
+If AWS is unavailable or live mode is disabled, the application uses `data/sample_results.json` and local transcripts.
+
+## Risk analysis
+
+`scoring.py` combines model-extracted signals with deterministic rules:
+
 ```python
 import scoring
-client = scoring.load_client_local("walter")            # or C's S3 loader
-calls = scoring.load_calls_local("walter")               # calls 1-3; include_demo=True adds Call 4
-results = scoring.analyze_client(client, calls)          # one result per call, schema.py shape
-new = scoring.analyze_new_call(client, calls, results, call_4)   # live upload
-```
-- Every result matches `schema.py`, including `date` and `next_steps`. `next_steps` is `None` for green. For yellow or red it holds `advisor_script`, and red adds `trusted_contact_message`, plus `hold_note` when money is moving. Every draft is labeled "Draft, requires human approval".
-- If Bedrock or parsing fails, the result has `level: "unavailable"`, `total: None` and the summary "Analysis unavailable, review manually". It never comes back green.
-- Optional `people_by_call`: a list of Comprehend name lists, one per call in order. Without it, the names the model returns are used. `scoring.recurring_new_people(...)` lists new names that show up in 2 or more calls.
-- `scoring.apply_rules(signals, prior_results)` is pure Python with no AWS calls. Thresholds and the 2-call yellow rule are constants at the top of `scoring.py`.
-- **For C:** `scoring.py` calls `aws_clients.converse(model_id, prompt, system=..., guardrail=False)` and `aws_clients.check_output(texts)` for the output guardrail. If `aws_clients` can't be imported, it falls back to its own paced boto3 calls.
-- **For B:** `data/sample_results.json` has hand-written results for every call (`walter`, `maria`, `linda`, plus `walter_demo_call_4`), so you can build the screen without Bedrock.
 
-On Windows, run Python as `py`. Full flag list: `py run_scoring.py -h`.
+client = scoring.load_client_local("walter")
+calls = scoring.load_calls_local("walter")
+results = scoring.analyze_client(client, calls)
+```
+
+Each result follows the format defined in `schema.py`. A result includes the risk level, evidence quotes, summary, and any draft next steps. Drafts require human approval. If analysis fails, the application reports `Analysis unavailable, review manually` instead of assigning a safe result.
+
+Useful scoring commands:
+
 ```bash
-py run_scoring.py --rules-only                    # offline: rules, quotes, new people vs sample data
-py run_scoring.py walter --mock --include-demo    # offline: full pipeline with fake Bedrock
-py run_scoring.py walter --show-prompt 3          # print the exact scoring prompt, no Bedrock
-py run_scoring.py walter                          # live Bedrock run, calls 1-3
-py run_scoring.py walter --include-demo           # also score Call 4
+python run_scoring.py --rules-only
+python run_scoring.py walter --mock --include-demo
+python run_scoring.py walter
+python run_scoring.py --all --no-next-steps --targets
 ```
 
-### Going live (once AWS credentials arrive)
-1. Put the event's temporary credentials in **one** of these places. Never put them in code or `.env.example`.
-   ```powershell
-   # Option A: this PowerShell terminal (lasts until you close it)
-   $env:AWS_ACCESS_KEY_ID="..."
-   $env:AWS_SECRET_ACCESS_KEY="..."
-   $env:AWS_SESSION_TOKEN="..."
-   $env:AWS_DEFAULT_REGION="us-east-1"
-   ```
-   Option B: uncomment the same three keys in your local `.env`, which is git-ignored.
-2. Look up the inference profile IDs:
-   ```powershell
-   aws bedrock list-inference-profiles --region us-east-1 --query "inferenceProfileSummaries[?contains(inferenceProfileName,'Claude')].[inferenceProfileName,inferenceProfileId]" --output table
-   ```
-   Paste the Sonnet 4.6 and Haiku 4.5 IDs (they usually start with `us.anthropic.`) into `.env` as `SONNET_MODEL_ID` and `HAIKU_MODEL_ID`. Get `GUARDRAIL_ID` and `S3_BUCKET` from C.
-3. Run these in order, and stop to fix anything that fails:
-   ```powershell
-   py run_scoring.py --check                           # credentials, IDs, 2 tiny Bedrock calls, guardrail
-   py run_scoring.py walter --call 2                   # Walter's Call 2 vs Call 1, should be yellow
-   py run_scoring.py --all --no-next-steps --targets   # PASS/FAIL per call vs expected colors
-   py run_scoring.py walter --include-demo             # full run with Haiku drafts
-   ```
-4. If a call misses its target color, adjust `RUBRIC_PROMPT` in `scoring.py` and rerun step 3. Run `--targets` 2 or 3 times to check that the scores stay consistent.
+## AWS resources
 
-Troubleshooting: if you see `ExpiredToken`, paste fresh credentials. If you see access denied, check the region (us-east-1) and model access. If you see an invalid model error, use the inference profile ID, not the plain model name. A full run of all three clients is about 17 Bedrock calls, and only one teammate should run it at a time.
+Create or reuse the private S3 bucket and upload the included sample data:
 
-### Upload the data to S3 (Call 4 stays out for the live demo)
 ```bash
-aws s3 sync data/clients s3://$S3_BUCKET/clients --region us-east-1
-aws s3 sync data/transcripts s3://$S3_BUCKET/transcripts --region us-east-1
+python aws_setup.py --upload-data your-bucket-name
 ```
-Before presenting, delete `uploads/walter/call-4.json` from the bucket (the screen's **Reset demo** button does this).
 
-No AWS CLI? The same setup in Python, with credentials exported in the terminal:
+Create or reuse the Bedrock guardrail:
+
 ```bash
-python aws_setup.py --upload-data second-look-lpl-432810293903   # clients/ and transcripts/, not data/demo
-python aws_setup.py --guardrail                                   # creates or reuses SecondLookSafety, prints GUARDRAIL_ID
+python aws_setup.py --guardrail
 ```
 
-## Screen (B): how it uses AWS
-- **Live mode** (credentials and model IDs set): transcripts load from S3 (falling back to `data/` if S3 can't be read), Comprehend finds the people mentioned, and `scoring.py` scores each call. Results are cached in memory, so a refresh doesn't call Bedrock again. **Receive Call 4 transcript** saves to `uploads/` in S3, then scores the call. **Ask** goes through the guardrail, which checks only the question on input and checks the whole answer.
-- **Guardrail placement:** transcripts are sent to Sonnet *without* an input guardrail, so a client's own words can't get their analysis blocked. What the model writes (summaries, quotes, drafts) is checked as OUTPUT with `ApplyGuardrail`, which blocks diagnosis talk and masks account numbers and SSNs.
-- **Without AWS** the screen shows `data/sample_results.json`, with a banner saying these are hand-written sample results. The sidebar toggle switches between the two.
-- **Before presenting:** click **Analyze all clients** once so switching clients is instant. A first run is about 30 Bedrock calls, paced at about one per second.
+Generate and validate the least-privilege runtime policy:
 
-## Agent and permissions (C, Step 8)
 ```bash
-python agent.py walter "What changed in Walter's last call?"   # one Strands agent on Sonnet, 3 tools
-python agent.py walter "Does Walter have dementia?"            # the guardrail refuses
-python aws_setup.py --iam-policy                                # writes iam/second-look-runtime-policy.json, validates it
+python aws_setup.py --iam-policy
 ```
-- **Tools:** `get_call_history`, `compare_to_baseline` and `draft_next_steps` take a client ID (and optionally a call number) and reuse `scoring.py`. They never raise. On failure they return "Analysis unavailable, review manually".
-- **Guardrail:** the agent's model has the guardrail attached with `guardrail_latest_message=True`, so the input check covers only the advisor's question, not transcripts returned by tools. Every answer is checked on output.
-- **Pacing and retries:** every agent model call waits on the same gate as the rest of the app (`aws_clients.wait_for_bedrock_slot`). Throttling retries back off for 2 to 16 seconds, up to 4 attempts.
-- **IAM:** the generated policy allows only reading `clients/`, `transcripts/` and `uploads/`, writing and deleting `uploads/`, invoking our two inference profiles (and their models only through those profiles), our one guardrail, and Comprehend `DetectEntities` in us-east-1. Screenshot it for the deck. If the event's participant role can't be changed, the policy still documents exactly what production would grant.
-- **The screen's Ask box uses the agent** in live mode: `agent.ask(client_id, question, client=..., calls=..., results=...)`. Passing what the screen shows makes the tools reuse those exact scores and drafts, so the agent never disagrees with the screen and doesn't re-score. It returns `{"answer", "blocked", "tools_used", "error"}`. If the agent can't run, the Ask box falls back to a direct guardrailed Sonnet call.
+
+The runtime policy permits only the required operations: reading client and transcript data, managing uploaded calls, invoking the configured inference profiles and guardrail, and calling Comprehend entity detection.
+
+## Guardrail behavior
+
+Client transcripts are analyzed without an input guardrail so that quoted client language does not prevent analysis. Model-generated summaries, evidence, drafts, and advisor-facing answers are checked as output. Advisor questions are checked as input before the agent responds.
+
+The guardrail blocks medical diagnosis language and masks account numbers and Social Security numbers. The application also includes a local refusal when a diagnosis is requested without a configured guardrail.
+
+## Project structure
+
+| Path | Purpose |
+|---|---|
+| `app.py` | Streamlit user interface and application flow |
+| `scoring.py` | Signal extraction, risk rules, and draft next steps |
+| `aws_clients.py` | S3, Comprehend, Bedrock, pacing, and retry helpers |
+| `agent.py` | Guardrailed advisor assistant and tools |
+| `aws_setup.py` | S3, guardrail, and IAM setup utilities |
+| `schema.py` | Shared analysis result format |
+| `data/` | Synthetic client data, transcripts, and offline results |
+| `tests/` | Offline application, agent, rules, and AWS request tests |
+| `iam/` | Least-privilege runtime policy |
 
 ## Tests
+
+Run the offline test suite:
+
 ```bash
-python tests/run_all.py     # every offline suite; uses fake keys, so it never calls AWS
+python tests/run_all.py
 ```
-These cover the rules and quotes, the pipeline with fake Bedrock, every AWS request shape (checked against botocore's API definitions), the Strands agent loop, and click-throughs of the screen in sample mode and simulated live mode. The live check is `python run_scoring.py --all --no-next-steps --targets` (about 22 Bedrock calls).
 
-## Rules
-- Made-up data only. Private S3 bucket only. No AWS keys in code.
-- About 1 Bedrock call per second. Only one person calls Bedrock at a time during testing.
-- If anything fails, show "Analysis unavailable, review manually", never a fake green.
+The offline tests use mocked AWS responses and do not make live AWS calls.
 
-## Branches
-Work on your own branch (`data-ai`, `ui`, `aws-plumbing`) and merge to `main` at 3 PM, 6 PM, and 9 PM. Keep `main` demo-ready.
+## Security principles
+
+- Use only synthetic data for development and demonstrations.
+- Keep the S3 bucket private.
+- Never commit AWS credentials.
+- Apply least-privilege IAM permissions.
+- Treat all generated next steps as drafts requiring advisor approval.
+- Report analysis failures explicitly; never replace them with a low-risk result.
