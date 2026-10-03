@@ -114,7 +114,36 @@ check("blocked drafts -> manual", steps["advisor_script"].startswith("Drafts una
 scoring._shared_check_output = lambda t: (t, False)
 steps = scoring.draft_next_steps(result, client, "Walter: I need it wired today.")
 check("red + money moving -> all three drafts", (steps["advisor_script"], steps["trusted_contact_message"], steps["hold_note"]) == ("a", "b", "c"))
+
+# 5b. drafts see the client's lines (with the amount) and never show placeholders
+draft_prompts = []
+def fake_placeholder_drafts(model_id, prompt, *, system=None, guardrail=False, max_tokens=1200):
+    draft_prompts.append(prompt)
+    return ('{"advisor_script": "a", "trusted_contact_message": "b",'
+            ' "hold_note": "Pending wire (~$[amount]) to an agent. Recommend review."}')
+scoring._shared_converse = fake_placeholder_drafts
+transcript = "Advisor: Is the wire going to James?\nMaria: I need to wire $45,000 today."
+steps = scoring.draft_next_steps(result, client, transcript)
+check("draft prompt has the client's amount", "Maria: I need to wire $45,000 today." in draft_prompts[-1])
+check("draft prompt leaves out advisor lines", "Is the wire going to James?" not in draft_prompts[-1])
+check("placeholder sentence dropped", steps["hold_note"] == "Recommend review.")
+moving = {"signals": {"out_of_character": {"score": 2}}}
+check("moving counts as money movement", scoring.money_is_moving(moving, "Maria: I'm moving everything to CoinVaultX."))
+check("cash out counts as money movement", scoring.money_is_moving(moving, "Maria: I want to cash out."))
+check("advisor-only wire doesn't count", not scoring.money_is_moving(moving, "Advisor: Did you wire anything?\nMaria: No."))
 config.GUARDRAIL_ID = ""
+
+# 5c. parallel analysis keeps the in-order rules (2-call yellow) and reports calls in order
+import mock_bedrock
+real_converse = scoring.converse
+scoring.converse = mock_bedrock.fake_converse
+scoring._shared_check_output = lambda t: (t, False)
+reported = []
+levels = [r["level"] for r in scoring.analyze_calls(client, calls[:3], on_result=lambda r: reported.append(r["call_number"]))]
+check("parallel analysis: green, yellow, red", levels == ["green", "yellow", "red"])
+check("parallel analysis reports calls in order", reported == [1, 2, 3])
+check("parallel analysis drafts flagged calls", all(r["next_steps"] for r in scoring.analyze_calls(client, calls[:3])[1:]))
+scoring.converse = real_converse
 
 # 6. friendly_error sees through aws_clients' wrapper
 from botocore.exceptions import ClientError

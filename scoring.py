@@ -7,6 +7,7 @@ color. A human decides what to do with the drafts.
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import config
@@ -29,7 +30,7 @@ BANNED_TERMS = re.compile(
     re.IGNORECASE,
 )
 MONEY_MOVEMENT = re.compile(
-    r"\b(wire|wired|transfer|send|sent|withdraw|withdrawal|move)\b", re.IGNORECASE
+    r"\b(?:wir|transfer|send|sent|withdr[ae]w|mov|liquidat)\w*|\bcash(?:ing)?\s+out\b", re.IGNORECASE
 )
 
 # Diagnosis words are kept out of the prompts on purpose: the guardrail's
@@ -51,6 +52,7 @@ Return only JSON, no other text, in this format:
 NEXT_STEPS_PROMPT = """You help a financial advisor follow up with a client whose recent calls show warning signs of possible financial exploitation or vulnerability.
 Do not name, suggest, or speculate about any medical or mental health condition, and do not comment on the client's capacity or competence. Do not accuse anyone. Keep a warm, respectful tone.
 These are drafts only: never say that anything has been sent, notified, initiated, scheduled, or done.
+Use only details that appear in the evidence or the client's lines. Never write placeholders or brackets such as [amount] or [name]; if a detail is unknown, say 'the requested amount' or leave it out.
 Write short drafts a human will review before anything is sent:
 - advisor_script: what the advisor could say on a check-in call with the client (3 to 5 sentences).
 - trusted_contact_message: a brief message to the client's trusted contact asking to talk. Do not share account details or balances.
@@ -215,6 +217,7 @@ _DONE_CLAIM = re.compile(
     re.IGNORECASE,
 )
 _CAPACITY = re.compile(r"\b(?:capacity|competen\w*)\b", re.IGNORECASE)
+_PLACEHOLDER = re.compile(r"\[[^\]]*\]")
 
 
 def _tidy_draft(text):
@@ -224,7 +227,8 @@ def _tidy_draft(text):
     text = re.sub(r"\s+(?:and|or)\s+(?:mental\s+)?(?:capacity|competence)\b", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(?:mental\s+)?(?:capacity|competence)\s+(?:and|or)\s+", "", text, flags=re.IGNORECASE)
     sentences = re.split(r"(?<=[.!?])\s+", text.strip())
-    kept = [s for s in sentences if not _DONE_CLAIM.search(s) and not _CAPACITY.search(s)]
+    kept = [s for s in sentences
+            if not _DONE_CLAIM.search(s) and not _CAPACITY.search(s) and not _PLACEHOLDER.search(s)]
     return " ".join(kept) if kept else None
 
 
@@ -420,11 +424,15 @@ def apply_rules(signals, prior_results=()):
 
 # ---------- Next steps ----------
 
-def money_is_moving(result, transcript):
-    client_lines = "\n".join(
-        line for line in transcript.splitlines() if not line.lower().startswith("advisor:")
+def _client_lines(transcript):
+    return "\n".join(
+        line for line in (transcript or "").splitlines() if not line.lower().startswith("advisor:")
     )
-    return result["signals"]["out_of_character"]["score"] >= 2 and bool(MONEY_MOVEMENT.search(client_lines))
+
+
+def money_is_moving(result, transcript):
+    return (result["signals"]["out_of_character"]["score"] >= 2
+            and bool(MONEY_MOVEMENT.search(_client_lines(transcript))))
 
 
 def draft_next_steps(result, client, transcript=""):
@@ -444,7 +452,8 @@ def draft_next_steps(result, client, transcript=""):
         f"Risk level: {result['level']}\n"
         f"Money movement pending: {'yes' if moving else 'no'}\n"
         f"What changed: {result['summary']}\n"
-        f"Evidence from the latest call:\n{evidence}"
+        f"Evidence from the latest call:\n{evidence}\n\n"
+        f"Client's lines from the latest call:\n{_client_lines(transcript)}"
     )
 
     steps = {
@@ -489,7 +498,14 @@ def analyze_new_call(client, past_calls, past_results, new_call, people_by_call=
         scored = score_call(new_call, past_calls, client)
     except Exception as err:
         return unavailable_result(new_call, friendly_error(err))
+    result = finish_result(client, past_calls, past_results, new_call, scored, people_by_call)
+    if with_next_steps:
+        result["next_steps"] = draft_next_steps(result, client, new_call["transcript"])
+    return result
 
+
+def finish_result(client, past_calls, past_results, new_call, scored, people_by_call=None):
+    """Turn score_call's output into a result: rules, new people, no drafts yet."""
     total, level = apply_rules(scored["signals"], past_results)
 
     if people_by_call is None:
@@ -509,19 +525,67 @@ def analyze_new_call(client, past_calls, past_results, new_call, people_by_call=
         "next_steps": None,
         "unverified_quotes": scored.get("unverified_quotes", []),
     }
-    if with_next_steps:
-        result["next_steps"] = draft_next_steps(result, client, new_call["transcript"])
     return result
+
+
+def _try_score(new_call, past_calls, client):
+    try:
+        return score_call(new_call, past_calls, client), None
+    except Exception as err:
+        return None, friendly_error(err)
+
+
+def analyze_calls(client, calls, people_by_call=None, with_next_steps=True, done=(), on_result=None):
+    """Analyze calls[len(done):], each against the calls before it. Never raises.
+
+    Scoring requests overlap but each still waits its turn at the Bedrock pacing gate. The
+    rules run in call order, because each call's level depends on the ones before it.
+    on_result(result) is called in the caller's thread, in call order.
+    """
+    results = list(done)
+    todo = range(len(results), len(calls))
+    if not todo:
+        return results
+    reported = todo.start
+
+    def report(upto, wait):
+        nonlocal reported
+        while reported < upto:
+            job = draft_jobs.get(reported)
+            if job is not None:
+                if not (wait or job.done()):
+                    return
+                results[reported]["next_steps"] = job.result()
+            if on_result:
+                on_result(results[reported])
+            reported += 1
+
+    pool = ThreadPoolExecutor(max_workers=len(todo))
+    draft_jobs = {}
+    try:
+        scoring_jobs = {i: pool.submit(_try_score, calls[i], calls[:i], client) for i in todo}
+        for i in todo:
+            scored, error = scoring_jobs[i].result()
+            if error is not None:
+                result = unavailable_result(calls[i], error)
+            else:
+                people = people_by_call[: i + 1] if people_by_call else None
+                result = finish_result(client, calls[:i], results, calls[i], scored, people)
+                if with_next_steps and result["level"] in ("yellow", "red"):
+                    draft_jobs[i] = pool.submit(draft_next_steps, result, client, calls[i]["transcript"])
+            results.append(result)
+            report(i + 1, wait=False)
+        report(len(calls), wait=True)
+    finally:
+        # If on_result raises (Streamlit stopping the script), don't block on requests still in flight.
+        pool.shutdown(wait=False, cancel_futures=True)
+    return results
 
 
 def analyze_client(client, calls, people_by_call=None, with_next_steps=True):
     """Analyze every call in order, each against the ones before it."""
     calls = sorted(calls, key=lambda c: c["call_number"])
-    results = []
-    for i, call in enumerate(calls):
-        people = people_by_call[: i + 1] if people_by_call else None
-        results.append(analyze_new_call(client, calls[:i], results, call, people, with_next_steps))
-    return results
+    return analyze_calls(client, calls, people_by_call, with_next_steps)
 
 
 # ---------- Local data (offline backup of the S3 bucket) ----------

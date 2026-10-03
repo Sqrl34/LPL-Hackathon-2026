@@ -34,9 +34,9 @@ def fake_converse(model_id, system, prompt, guardrail=False):
         name = re.search(r"^Client: (.+)$", prompt, re.MULTILINE).group(1)
         first = name.split()[0]
         return json.dumps({
-            "advisor_script": f"[mock] Hi {first}, I wanted to follow up on our last call and talk things through together.",
-            "trusted_contact_message": f"[mock] Hello, I'm {first}'s advisor. You are listed as the trusted contact; could we talk briefly?",
-            "hold_note": "[mock] Pending money movement matches an exploitation pattern. Recommend review under FINRA Rule 2165.",
+            "advisor_script": f"(mock) Hi {first}, I wanted to follow up on our last call and talk things through together.",
+            "trusted_contact_message": f"(mock) Hello, I'm {first}'s advisor. You are listed as the trusted contact; could we talk briefly?",
+            "hold_note": "(mock) Pending money movement matches an exploitation pattern. Recommend review under FINRA Rule 2165.",
         })
 
     name = re.search(r"^Name: (.+)$", prompt, re.MULTILINE).group(1).strip()

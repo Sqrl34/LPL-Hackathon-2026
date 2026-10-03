@@ -1,4 +1,6 @@
 """Click through app.py in sample mode (no AWS) or simulated live mode (all AWS calls faked)."""
+import hashlib
+import json
 import os
 import re
 import sys
@@ -137,6 +139,20 @@ if MODE == "live":
     print("ok  normal question answered by the agent with the screen's 4 calls:", text_of(at.caption)[:70])
 
 if MODE == "live":
+    # An interrupted first load resumes: Maria's Call 1 is already done, so only Calls 2-4 are scored.
+    maria_calls = scoring.load_calls_local("maria")
+    digest = hashlib.sha256(json.dumps(maria_calls, sort_keys=True).encode()).hexdigest()[:16]
+    at.session_state["partial"] = {("maria", "s3", digest): {
+        "results": [scoring.load_sample_results()["maria"][0]], "people": None, "people_done": True}}
+    scored = []
+    real_score = scoring.score_call
+    scoring.score_call = lambda call, *a, **k: scored.append(call["call_number"]) or real_score(call, *a, **k)
+    at.button(key="pick-maria").click().run(); no_error("open Maria mid-analysis")
+    scoring.score_call = real_score
+    assert sorted(scored) == [2, 3, 4], scored
+    assert not at.session_state["partial"], "partial progress should be cleared once stored"
+    print("ok  interrupted analysis resumed from Call 2")
+
     at.button[labels().index("Analyze all clients")].click().run(); no_error("analyze all clients")
     st = side_status()
     assert "Not analyzed yet" not in " ".join(st), st
