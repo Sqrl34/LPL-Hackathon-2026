@@ -145,12 +145,11 @@ if MODE == "live":
     at.session_state["partial"] = {("maria", "s3", digest): {
         "results": [scoring.load_sample_results()["maria"][0]], "people": None, "people_done": True}}
     scored = []
-    real_analyze = scoring.analyze_new_call
-    scoring.analyze_new_call = lambda client, past, results, call, *a, **k: (
-        scored.append(call["call_number"]) or real_analyze(client, past, results, call, *a, **k))
+    real_score = scoring.score_call
+    scoring.score_call = lambda call, *a, **k: scored.append(call["call_number"]) or real_score(call, *a, **k)
     at.button(key="pick-maria").click().run(); no_error("open Maria mid-analysis")
-    scoring.analyze_new_call = real_analyze
-    assert scored == [2, 3, 4], scored
+    scoring.score_call = real_score
+    assert sorted(scored) == [2, 3, 4], scored
     assert not at.session_state["partial"], "partial progress should be cleared once stored"
     print("ok  interrupted analysis resumed from Call 2")
 

@@ -133,6 +133,18 @@ check("cash out counts as money movement", scoring.money_is_moving(moving, "Mari
 check("advisor-only wire doesn't count", not scoring.money_is_moving(moving, "Advisor: Did you wire anything?\nMaria: No."))
 config.GUARDRAIL_ID = ""
 
+# 5c. parallel analysis keeps the in-order rules (2-call yellow) and reports calls in order
+import mock_bedrock
+real_converse = scoring.converse
+scoring.converse = mock_bedrock.fake_converse
+scoring._shared_check_output = lambda t: (t, False)
+reported = []
+levels = [r["level"] for r in scoring.analyze_calls(client, calls[:3], on_result=lambda r: reported.append(r["call_number"]))]
+check("parallel analysis: green, yellow, red", levels == ["green", "yellow", "red"])
+check("parallel analysis reports calls in order", reported == [1, 2, 3])
+check("parallel analysis drafts flagged calls", all(r["next_steps"] for r in scoring.analyze_calls(client, calls[:3])[1:]))
+scoring.converse = real_converse
+
 # 6. friendly_error sees through aws_clients' wrapper
 from botocore.exceptions import ClientError
 inner = ClientError({"Error": {"Code": "ExpiredTokenException", "Message": "x"}}, "Converse")

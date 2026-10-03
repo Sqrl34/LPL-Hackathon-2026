@@ -7,6 +7,7 @@ color. A human decides what to do with the drafts.
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import config
@@ -497,7 +498,14 @@ def analyze_new_call(client, past_calls, past_results, new_call, people_by_call=
         scored = score_call(new_call, past_calls, client)
     except Exception as err:
         return unavailable_result(new_call, friendly_error(err))
+    result = finish_result(client, past_calls, past_results, new_call, scored, people_by_call)
+    if with_next_steps:
+        result["next_steps"] = draft_next_steps(result, client, new_call["transcript"])
+    return result
 
+
+def finish_result(client, past_calls, past_results, new_call, scored, people_by_call=None):
+    """Turn score_call's output into a result: rules, new people, no drafts yet."""
     total, level = apply_rules(scored["signals"], past_results)
 
     if people_by_call is None:
@@ -517,19 +525,67 @@ def analyze_new_call(client, past_calls, past_results, new_call, people_by_call=
         "next_steps": None,
         "unverified_quotes": scored.get("unverified_quotes", []),
     }
-    if with_next_steps:
-        result["next_steps"] = draft_next_steps(result, client, new_call["transcript"])
     return result
+
+
+def _try_score(new_call, past_calls, client):
+    try:
+        return score_call(new_call, past_calls, client), None
+    except Exception as err:
+        return None, friendly_error(err)
+
+
+def analyze_calls(client, calls, people_by_call=None, with_next_steps=True, done=(), on_result=None):
+    """Analyze calls[len(done):], each against the calls before it. Never raises.
+
+    Scoring requests overlap but each still waits its turn at the Bedrock pacing gate. The
+    rules run in call order, because each call's level depends on the ones before it.
+    on_result(result) is called in the caller's thread, in call order.
+    """
+    results = list(done)
+    todo = range(len(results), len(calls))
+    if not todo:
+        return results
+    reported = todo.start
+
+    def report(upto, wait):
+        nonlocal reported
+        while reported < upto:
+            job = draft_jobs.get(reported)
+            if job is not None:
+                if not (wait or job.done()):
+                    return
+                results[reported]["next_steps"] = job.result()
+            if on_result:
+                on_result(results[reported])
+            reported += 1
+
+    pool = ThreadPoolExecutor(max_workers=len(todo))
+    draft_jobs = {}
+    try:
+        scoring_jobs = {i: pool.submit(_try_score, calls[i], calls[:i], client) for i in todo}
+        for i in todo:
+            scored, error = scoring_jobs[i].result()
+            if error is not None:
+                result = unavailable_result(calls[i], error)
+            else:
+                people = people_by_call[: i + 1] if people_by_call else None
+                result = finish_result(client, calls[:i], results, calls[i], scored, people)
+                if with_next_steps and result["level"] in ("yellow", "red"):
+                    draft_jobs[i] = pool.submit(draft_next_steps, result, client, calls[i]["transcript"])
+            results.append(result)
+            report(i + 1, wait=False)
+        report(len(calls), wait=True)
+    finally:
+        # If on_result raises (Streamlit stopping the script), don't block on requests still in flight.
+        pool.shutdown(wait=False, cancel_futures=True)
+    return results
 
 
 def analyze_client(client, calls, people_by_call=None, with_next_steps=True):
     """Analyze every call in order, each against the ones before it."""
     calls = sorted(calls, key=lambda c: c["call_number"])
-    results = []
-    for i, call in enumerate(calls):
-        people = people_by_call[: i + 1] if people_by_call else None
-        results.append(analyze_new_call(client, calls[:i], results, call, people, with_next_steps))
-    return results
+    return analyze_calls(client, calls, people_by_call, with_next_steps)
 
 
 # ---------- Local data (offline backup of the S3 bucket) ----------

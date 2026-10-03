@@ -331,14 +331,17 @@ def run_analysis(client_id, state, box, on_call_done=None):
     people = progress["people"]
     box.write("Found the people mentioned with Amazon Comprehend" if people is not None
               else "Comprehend unavailable, using the names Claude found")
-    results = progress["results"]
-    for i in range(len(results), len(calls)):
-        call = calls[i]
-        box.write(f"Scoring Call {call['call_number']} against the calls before it")
-        result = scoring.analyze_new_call(client, calls[:i], results, call, people[: i + 1] if people else None)
-        results.append(result)
+    remaining = len(calls) - len(progress["results"])
+    if remaining:
+        box.write(f"Scoring {remaining} call{'s' if remaining != 1 else ''} against the calls before them")
+
+    def finished(r):
+        progress["results"].append(r)
+        box.write(f"Call {r['call_number']}: {style_for(r['level'])['label']}")
         if on_call_done:
-            on_call_done(result)
+            on_call_done(r)
+
+    results = scoring.analyze_calls(client, calls, people, done=list(progress["results"]), on_result=finished)
     failed = any(r["level"] == "unavailable" for r in results)
     entry = {"results": list(results), "people": people}
     if failed:
@@ -625,9 +628,13 @@ if demo_call:
         msg_col, btn_col = st.columns([3, 1], vertical_alignment="center")
         msg_col.markdown(f"**{client['advisor']} just finished Call {demo_call['call_number']} with "
                          f"{first_name(client)}.** The note-taker has the transcript ready.")
-        if btn_col.button(f"Receive Call {demo_call['call_number']} transcript", type="primary",
-                          key="receive", width="stretch", disabled=busy):
-            receive_call(state, client_id, demo_call, from_note_taker=True)
+        receiving = st.session_state.get("receiving") == client_id
+        btn_col.button(f"Receive Call {demo_call['call_number']} transcript", type="primary",
+                       key="receive", width="stretch", disabled=busy or receiving,
+                       on_click=lambda: st.session_state.update(receiving=client_id))
+    if receiving:
+        st.session_state.pop("receiving", None)
+        receive_call(state, client_id, demo_call, from_note_taker=True)
 
 
 # ---------- Calls ----------
