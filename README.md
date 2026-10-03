@@ -63,7 +63,7 @@ All AWS services run in `us-east-1`.
    streamlit run app.py
    ```
 
-8. **Open** http://localhost:8501.
+8. **Open the Local URL** that Streamlit prints (usually http://localhost:8501).
 
 Results are kept in memory until the server restarts. Click **Re-run analysis** in the sidebar to score a client again.
 
@@ -81,7 +81,7 @@ cp .env.example .env
 streamlit run app.py
 ```
 
-Open http://localhost:8501. If AWS is already set up, you can also switch to the backup data with the **Live Bedrock analysis** toggle in the sidebar.
+Open the Local URL that Streamlit prints (usually http://localhost:8501). If AWS is already set up, you can also switch to the backup data with the **Live Bedrock analysis** toggle in the sidebar.
 
 ## Tests
 
