@@ -131,11 +131,18 @@ st.markdown(
       [class*="st-key-call-"]:has(button:not(:disabled)):hover {{
         border-color:var(--loupe) !important; background:#F7FBFD;
       }}
+      [class*="st-key-call-"]:has(button:focus-visible) {{ outline:2px solid var(--loupe); outline-offset:2px; }}
       [class*="st-key-call-"]:has(button:disabled) {{ cursor:default; }}
-      [class*="st-key-call-"] .stButton {{ position:absolute; inset:0; z-index:5; margin:0; }}
-      [class*="st-key-call-"] .stButton > button {{ position:absolute; inset:0; width:100%; height:100%;
-                                                     min-height:100%; opacity:0; cursor:pointer; }}
-      [class*="st-key-call-"] .stButton > button:disabled {{ cursor:default; }}
+      [class*="st-key-call-"] > [class*="st-key-view-"] {{ position:absolute !important; inset:0;
+                                                            width:100% !important; height:100% !important;
+                                                            z-index:5; margin:0 !important; }}
+      [class*="st-key-call-"] [class*="st-key-view-"] .stButton,
+      [class*="st-key-call-"] [class*="st-key-view-"] .stButton > div {{ width:100%; height:100%; }}
+      [class*="st-key-call-"] [class*="st-key-view-"] button {{ position:absolute; inset:0; width:100%; height:100%;
+                                                                 min-height:100%; opacity:0 !important;
+                                                                 color:transparent !important; font-size:0 !important;
+                                                                 cursor:pointer; }}
+      [class*="st-key-call-"] .stButton button:disabled {{ cursor:default; }}
       .sl-call-when {{ color:var(--graphite); font-size:.78rem; font-weight:550; text-transform:uppercase;
                        letter-spacing:.04em; }}
       .sl-call-level {{ font-weight:750; color:var(--lvl); margin:.2rem 0 .65rem; }}
@@ -472,6 +479,11 @@ def section_rule():
     st.markdown('<div class="sl-section-rule"></div>', unsafe_allow_html=True)
 
 
+def select_call(selected_client_id, call_number):
+    """Select the exact call bound to a card's stable Streamlit key."""
+    st.session_state.selected[selected_client_id] = call_number
+
+
 # ---------- Load the open client (runs live analysis the first time) ----------
 
 if st.session_state.pop("analyze_all", False):
@@ -609,15 +621,14 @@ for col, r in zip(cols, results):
                 f'<div class="sl-call-level" style="--lvl:{s["color"]}">{s["label"]}{score}</div>{body}',
                 unsafe_allow_html=True,
             )
-            if st.button(
-                f"Call {r['call_number']} selected" if is_selected else f"Open Call {r['call_number']}",
+            st.button(
+                "\u200b",
                 key=f"view-{client_id}-{r['call_number']}",
                 disabled=is_selected,
                 type="tertiary",
-                help=None if is_selected else f"Show the evidence from Call {r['call_number']}",
-            ):
-                st.session_state.selected[client_id] = r["call_number"]
-                st.rerun()
+                on_click=select_call,
+                args=(client_id, r["call_number"]),
+            )
 
 score_rows = ""
 for r in results:
