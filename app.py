@@ -15,7 +15,6 @@ import hashlib
 import html
 import json
 
-import plotly.graph_objects as go
 import streamlit as st
 
 import agent
@@ -27,17 +26,18 @@ from schema import SIGNALS
 
 st.set_page_config(page_title="Second Look", page_icon=":material/manage_search:", layout="wide")
 
-INK, GRAPHITE, RULE, LOUPE = "#1B2433", "#5E6B7E", "#D5DBE4", "#2D4FD6"
-FONT = "Schibsted Grotesk, system-ui, sans-serif"
+INK, GRAPHITE, RULE, LOUPE = "#173042", "#607483", "#D7E2E8", "#0067B9"
+NAVY, PALE_BLUE, CANVAS = "#062E46", "#EAF4FA", "#F7F9FA"
+FONT = "Arial, Helvetica, sans-serif"
 
 CLIENT_IDS = ["walter", "maria", "linda"]
 
 LEVEL_STYLE = {
-    "green": {"color": "#2F7D6D", "label": "Steady"},
-    "yellow": {"color": "#B9800F", "label": "Watch"},
-    "red": {"color": "#B23A2E", "label": "Review now"},
-    "unavailable": {"color": "#7A8494", "label": "Review manually"},
-    "pending": {"color": "#7A8494", "label": "Not analyzed yet"},
+    "green": {"color": "#16735C", "label": "Steady"},
+    "yellow": {"color": "#A66B00", "label": "Watch"},
+    "red": {"color": "#B33A32", "label": "Review now"},
+    "unavailable": {"color": "#667985", "label": "Review manually"},
+    "pending": {"color": "#667985", "label": "Not analyzed yet"},
 }
 
 SIGNAL_LABELS = {
@@ -49,8 +49,8 @@ SIGNAL_LABELS = {
 }
 
 # Lighter versions of the level colors, readable on the dark sidebar.
-SIDEBAR_LEVEL_COLOR = {"green": "#6CC4AE", "yellow": "#E8B84A", "red": "#F08A7E",
-                       "unavailable": "#A9B3C1", "pending": "#A9B3C1"}
+SIDEBAR_LEVEL_COLOR = {"green": "#78D1BA", "yellow": "#F3C969", "red": "#FF9D94",
+                       "unavailable": "#B7C8D1", "pending": "#B7C8D1"}
 
 YELLOW_LINE, RED_LINE, MAX_SCORE = 4, 8, 15
 
@@ -71,54 +71,129 @@ LOCAL_REFUSAL = (
 st.markdown(
     f"""
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:ital,wght@1,400;1,500&display=swap');
-      :root {{ --ink:{INK}; --graphite:{GRAPHITE}; --rule:{RULE}; --loupe:{LOUPE}; }}
-      .block-container {{ padding-top:2.5rem; max-width:1180px; }}
+      :root {{ --ink:{INK}; --graphite:{GRAPHITE}; --rule:{RULE}; --loupe:{LOUPE};
+               --navy:{NAVY}; --pale-blue:{PALE_BLUE}; --canvas:{CANVAS}; }}
+      html, body, [class*="css"], .stApp, button, input, textarea, select {{
+        font-family:Arial,Helvetica,sans-serif;
+      }}
+      code, pre, kbd, samp {{ font-family:Arial,Helvetica,sans-serif !important; }}
+      h1, h2, h3, h4, h5, h6 {{ font-family:"Times New Roman",Times,serif !important; }}
+      [data-testid="stAppViewContainer"] {{ background:var(--canvas); }}
+      .block-container {{ padding-top:2rem; padding-bottom:4rem; max-width:1200px; }}
+      [data-testid="stHeader"] {{ background:transparent; }}
 
-      .sl-name {{ font-size:2.5rem; font-weight:800; letter-spacing:-0.02em; line-height:1.05;
-                  color:var(--ink); margin-bottom:0.35rem; }}
-      .sl-standing {{ font-size:1.05rem; color:var(--ink); }}
+      .sl-client-hero {{ background:#fff; border:1px solid var(--rule);
+                         border-radius:.4rem; padding:1.35rem 1.5rem; margin-bottom:1rem; }}
+      .sl-client-top {{ display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }}
+      .sl-kicker {{ text-transform:uppercase; letter-spacing:.11em; color:var(--loupe);
+                    font-size:.7rem; font-weight:700; margin-bottom:.32rem; }}
+      .sl-name {{ font-family:"Times New Roman",Times,serif; font-size:2.35rem; font-weight:700;
+                  letter-spacing:-.02em; line-height:1.05; color:var(--navy); margin:0; }}
+      .sl-risk-pill {{ flex:0 0 auto; border-left:3px solid var(--lvl); color:var(--lvl);
+                       padding:.2rem 0 .2rem .65rem; font-size:.8rem; font-weight:700; }}
+      .sl-standing {{ font-size:.98rem; color:var(--ink); margin-top:.72rem; }}
       .sl-standing b {{ color:var(--lvl); }}
-      .sl-meta {{ color:var(--graphite); margin-top:0.35rem; max-width:62rem; }}
-      .sl-h {{ font-size:1.2rem; font-weight:700; color:var(--ink); margin:2.2rem 0 0.6rem; }}
-      .sl-h small {{ font-size:0.92rem; font-weight:400; color:var(--graphite); margin-left:0.5rem; }}
+      .sl-meta {{ color:var(--graphite); margin-top:.42rem; max-width:65rem; font-size:.9rem; line-height:1.55; }}
+      .sl-h {{ display:flex; align-items:baseline; flex-wrap:wrap; gap:.35rem .55rem;
+               font-family:"Times New Roman",Times,serif; font-size:1.35rem; font-weight:700;
+               color:var(--navy); background:#EEF4F7; border-left:3px solid var(--loupe);
+               border-bottom:1px solid var(--rule); margin:1.4rem 0 .9rem; padding:.65rem .8rem; }}
+      .sl-section-label {{ font-family:Arial,Helvetica,sans-serif; font-size:.66rem; line-height:1;
+                           font-weight:700; text-transform:uppercase; letter-spacing:.1em;
+                           color:var(--loupe); margin-right:.15rem; }}
+      .sl-h small {{ font-family:Arial,Helvetica,sans-serif; font-size:.8rem; font-weight:400;
+                     color:var(--graphite); letter-spacing:0; }}
+      .sl-section-rule {{ height:1px; background:var(--rule); margin:2.2rem 0 .2rem; }}
       .sl-quiet {{ color:var(--graphite); }}
 
+      [data-testid="stAlert"] {{ border-radius:.35rem; border-width:1px; }}
+      [data-testid="stStatusWidget"] {{ border-radius:.4rem; }}
+      [data-testid="stVerticalBlockBorderWrapper"] {{ border-color:var(--rule) !important;
+                                                       border-radius:.4rem !important; }}
+      .stButton > button, .stFormSubmitButton > button {{ font-weight:600; border-radius:.3rem;
+                                                         min-height:2.5rem; }}
+      .stTextInput input, .stTextArea textarea {{ border-radius:.3rem !important; border-color:var(--rule) !important;
+                                                  background:#fff !important; }}
+      .stTextInput input:focus, .stTextArea textarea:focus {{ border-color:var(--loupe) !important;
+                                                             outline:1px solid var(--loupe) !important; }}
+
       /* The signature: quoted words get a marker stroke whose height grows with the score. */
-      .sl-mark {{ font-style:italic; color:var(--ink); padding:0 0.1em;
+      .sl-mark {{ font-style:italic; color:var(--ink); padding:0 .1em;
                   box-decoration-break:clone; -webkit-box-decoration-break:clone; }}
-      .sl-mark.s1 {{ background:linear-gradient(transparent 72%, rgba(45,79,214,0.22) 72%); }}
-      .sl-mark.s2 {{ background:linear-gradient(transparent 42%, rgba(45,79,214,0.24) 42%); }}
-      .sl-mark.s3 {{ background:linear-gradient(rgba(45,79,214,0.30), rgba(45,79,214,0.30)); }}
+      .sl-mark.s1 {{ background:linear-gradient(transparent 72%, rgba(0,103,185,.18) 72%); }}
+      .sl-mark.s2 {{ background:linear-gradient(transparent 42%, rgba(0,103,185,.19) 42%); }}
+      .sl-mark.s3 {{ background:linear-gradient(rgba(0,103,185,.20), rgba(0,103,185,.20)); }}
 
       /* Call cards: Streamlit containers keyed call-<client>-<n>. */
-      [class*="st-key-call-"] {{ background:#fff; min-height:13.5rem; justify-content:space-between; }}
-      .sl-call-when {{ color:var(--graphite); font-size:0.88rem; }}
-      .sl-call-level {{ font-weight:700; color:var(--lvl); margin:0.15rem 0 0.55rem; }}
+      [class*="st-key-call-"] {{ position:relative; overflow:hidden; background:#fff;
+                                 min-height:12rem; justify-content:space-between; cursor:pointer;
+                                 transition:border-color .12s ease, background-color .12s ease; }}
+      [class*="st-key-call-"]:has(button:not(:disabled)):hover {{
+        border-color:var(--loupe) !important; background:#F7FBFD;
+      }}
+      [class*="st-key-call-"]:has(button:focus-visible) {{ outline:2px solid var(--loupe); outline-offset:2px; }}
+      [class*="st-key-call-"]:has(button:disabled) {{ cursor:default; }}
+      [class*="st-key-call-"] > [class*="st-key-view-"] {{ position:absolute !important; inset:0;
+                                                            width:100% !important; height:100% !important;
+                                                            z-index:5; margin:0 !important; }}
+      [class*="st-key-call-"] [class*="st-key-view-"] .stButton,
+      [class*="st-key-call-"] [class*="st-key-view-"] .stButton > div {{ width:100%; height:100%; }}
+      [class*="st-key-call-"] [class*="st-key-view-"] button {{ position:absolute; inset:0; width:100%; height:100%;
+                                                                 min-height:100%; opacity:0 !important;
+                                                                 color:transparent !important; font-size:0 !important;
+                                                                 cursor:pointer; }}
+      [class*="st-key-call-"] .stButton button:disabled {{ cursor:default; }}
+      .sl-call-when {{ color:var(--graphite); font-size:.78rem; font-weight:550; text-transform:uppercase;
+                       letter-spacing:.04em; }}
+      .sl-call-level {{ font-weight:750; color:var(--lvl); margin:.2rem 0 .65rem; }}
       .sl-call-level span {{ font-weight:400; color:var(--graphite); }}
-      .sl-call-quote {{ line-height:1.5; }}
+      .sl-call-quote {{ line-height:1.55; font-size:.9rem; }}
 
-      .sl-summary {{ font-size:1.05rem; line-height:1.6; max-width:40rem; margin-bottom:0.6rem; }}
+      .sl-score-panel {{ margin-top:1rem; background:#fff; border:1px solid var(--rule); }}
+      .sl-score-head {{ display:flex; align-items:center; justify-content:space-between; gap:1rem;
+                        padding:.65rem .8rem; border-bottom:1px solid var(--rule); }}
+      .sl-score-title {{ font-family:"Times New Roman",Times,serif; color:var(--navy);
+                         font-size:1.05rem; font-weight:700; }}
+      .sl-score-key {{ color:var(--graphite); font-size:.72rem; }}
+      .sl-score-key b {{ font-weight:700; }}
+      .sl-score-row {{ display:grid; grid-template-columns:8rem minmax(10rem,1fr) 3.2rem 6.5rem;
+                       gap:.8rem; align-items:center; padding:.72rem .8rem; border-bottom:1px solid var(--rule); }}
+      .sl-score-row:last-child {{ border-bottom:0; }}
+      .sl-score-row.selected {{ background:#F7FBFD; }}
+      .sl-score-call {{ color:var(--navy); font-weight:700; font-size:.86rem; }}
+      .sl-score-date {{ color:var(--graphite); font-size:.7rem; font-weight:400; margin-top:.1rem; }}
+      .sl-score-track {{ position:relative; height:.48rem; background:#E7EDF0; overflow:hidden; }}
+      .sl-score-fill {{ height:100%; background:var(--lvl); min-width:0; }}
+      .sl-score-value {{ color:var(--ink); font-size:.82rem; font-weight:700; text-align:right; }}
+      .sl-score-status {{ color:var(--lvl); font-size:.78rem; font-weight:700; text-align:right; }}
+
+      .sl-summary {{ font-size:1rem; line-height:1.65; max-width:42rem; margin-bottom:.75rem;
+                     color:#294657; }}
       .sl-signal {{ display:grid; grid-template-columns:9.5rem 2.6rem 1fr; column-gap:1rem;
-                    align-items:baseline; padding:0.7rem 0; border-top:1px solid var(--rule); }}
-      .sl-signal-name {{ font-weight:600; }}
-      .sl-pips i {{ display:inline-block; width:0.5rem; height:0.85rem; margin-right:3px;
-                    background:var(--rule); border-radius:1px; vertical-align:-1px; }}
+                    align-items:baseline; padding:.8rem 0; border-top:1px solid var(--rule); }}
+      .sl-signal-name {{ font-weight:650; color:var(--navy); }}
+      .sl-pips i {{ display:inline-block; width:.5rem; height:.85rem; margin-right:3px;
+                    background:var(--rule); border-radius:2px; vertical-align:-1px; }}
       .sl-pips i.on {{ background:var(--loupe); }}
       .sl-signal-quote {{ line-height:1.55; }}
       @media (max-width:640px) {{
+        .sl-client-top {{ align-items:flex-start; flex-direction:column; }}
         .sl-signal {{ grid-template-columns:1fr auto; row-gap:0.3rem; }}
         .sl-signal-quote {{ grid-column:1 / -1; }}
         .sl-name {{ font-size:2rem; }}
+        .sl-score-head {{ align-items:flex-start; flex-direction:column; }}
+        .sl-score-row {{ grid-template-columns:5.5rem 1fr 2.8rem; gap:.55rem; }}
+        .sl-score-status {{ grid-column:2 / -1; text-align:left; margin-top:-.35rem; }}
       }}
 
-      .sl-people {{ border-collapse:collapse; width:100%; }}
-      .sl-people th {{ font-weight:500; font-size:0.88rem; color:var(--graphite); }}
-      .sl-people th, .sl-people td {{ border-bottom:1px solid var(--rule); padding:0.55rem 0.4rem;
+      .sl-people {{ border-collapse:collapse; width:100%; border:1px solid var(--rule); background:#fff; }}
+      .sl-people th {{ font-weight:650; font-size:.78rem; color:var(--graphite); background:#F1F6F8; }}
+      .sl-people th, .sl-people td {{ border-bottom:1px solid var(--rule); padding:.65rem .45rem;
                                       text-align:center; }}
+      .sl-people tr:last-child td {{ border-bottom:0; }}
       .sl-people th:first-child, .sl-people td:first-child {{ text-align:left; }}
       .sl-people .dot {{ display:inline-block; width:0.45rem; height:0.45rem; border-radius:50%;
-                         background:var(--ink); }}
+                         background:var(--loupe); }}
       .sl-people .gap {{ color:#AEB7C4; }}
       .sl-new {{ font-weight:700; color:var(--loupe); }}
       .sl-people-note {{ color:var(--graphite); margin-top:0.6rem; font-size:0.92rem; }}
@@ -126,12 +201,15 @@ st.markdown(
       .sl-draft {{ font-style:italic; line-height:1.6; max-width:44rem; margin:0.1rem 0 0.4rem; }}
       .sl-plain {{ line-height:1.6; max-width:44rem; margin:0.1rem 0 0.4rem; }}
 
-      [data-testid="stSidebar"] .sl-wordmark {{ font-weight:800; font-size:1.3rem; letter-spacing:-0.01em; }}
+      [data-testid="stSidebar"] {{ border-right:1px solid #28546C; }}
+      [data-testid="stSidebar"] > div:first-child {{ padding-top:1.35rem; }}
+      [data-testid="stSidebar"] .sl-wordmark {{ font-family:"Times New Roman",Times,serif;
+                                                font-weight:700; font-size:1.45rem; }}
       [data-testid="stSidebar"] [class*="st-key-pick-"] button {{ justify-content:flex-start;
-          padding:0.35rem 0.6rem; border-radius:0.35rem; min-height:2.4rem; }}
+          padding:.38rem .65rem; border-radius:.3rem; min-height:2.45rem; border-color:transparent; }}
       [data-testid="stSidebar"] [class*="st-key-pick-"] button > div {{ justify-content:flex-start; width:100%; }}
       [data-testid="stSidebar"] [class*="st-key-pick-"] button p {{ text-align:left; }}
-      [data-testid="stSidebar"] .sl-side-status {{ font-size:0.85rem; font-weight:600; text-align:right;
+      [data-testid="stSidebar"] .sl-side-status {{ font-size:.76rem; font-weight:700; text-align:right;
           line-height:2.4rem; }}
       [data-testid="stSidebar"] [data-testid="stMarkdownContainer"]:has(.sl-side-status) {{ margin-bottom:0; }}
     </style>
@@ -390,9 +468,20 @@ def given_name(name):
     return name.strip().split()[0].strip(".,()") if name and name.strip() else ""
 
 
-def heading(text, aside=""):
+def heading(text, aside="", label=""):
     aside_html = f"<small>{aside}</small>" if aside else ""
-    st.markdown(f'<div class="sl-h">{text}{aside_html}</div>', unsafe_allow_html=True)
+    label_html = f'<span class="sl-section-label">{label}</span>' if label else ""
+    st.markdown(f'<div class="sl-h">{label_html}<span>{text}</span>{aside_html}</div>',
+                unsafe_allow_html=True)
+
+
+def section_rule():
+    st.markdown('<div class="sl-section-rule"></div>', unsafe_allow_html=True)
+
+
+def select_call(selected_client_id, call_number):
+    """Select the exact call bound to a card's stable Streamlit key."""
+    st.session_state.selected[selected_client_id] = call_number
 
 
 # ---------- Load the open client (runs live analysis the first time) ----------
@@ -478,10 +567,14 @@ else:
     standing = (f'<b>{latest_style["label"]}</b> · Call {latest["call_number"]} on {nice_date(latest["date"])} '
                 f'scored {latest["total"]} of {MAX_SCORE}')
 st.markdown(
-    f'<div class="sl-name">{html.escape(client["name"])}</div>'
-    f'<div class="sl-standing" style="--lvl:{latest_style["color"]}">{standing}</div>'
-    f'<div class="sl-meta">Advisor {html.escape(client["advisor"])} · Trusted contact '
-    f'{html.escape(client["trusted_contact"])} · Age {client["age"]}<br>{html.escape(client["notes"])}</div>',
+    f'<div class="sl-client-hero" style="--lvl:{latest_style["color"]}">'
+    f'<div class="sl-client-top"><div><div class="sl-kicker">Client monitoring</div>'
+    f'<div class="sl-name">{html.escape(client["name"])}</div></div>'
+    f'<div class="sl-risk-pill">{latest_style["label"]}</div></div>'
+    f'<div class="sl-standing">{standing}</div>'
+    f'<div class="sl-meta">Advisor {html.escape(client["advisor"])} &nbsp;·&nbsp; Trusted contact '
+    f'{html.escape(client["trusted_contact"])} &nbsp;·&nbsp; Age {client["age"]}'
+    f'<br>{html.escape(client["notes"])}</div></div>',
     unsafe_allow_html=True,
 )
 
@@ -502,10 +595,11 @@ if demo_call:
 
 # ---------- Calls ----------
 
-heading("Calls", f"compared only with {first_name(client)}'s own earlier calls")
+section_rule()
+heading("Calls", f"compared only with {first_name(client)}'s own earlier calls", "Timeline")
 
 selected_key = f"call-{client_id}-{selected['call_number']}"
-st.markdown(f"<style>.st-key-{selected_key} {{ border:2px solid {INK} !important; }}</style>",
+st.markdown(f"<style>.st-key-{selected_key} {{ border:2px solid {LOUPE} !important; }}</style>",
             unsafe_allow_html=True)
 
 cols = st.columns(len(results))
@@ -527,42 +621,47 @@ for col, r in zip(cols, results):
                 f'<div class="sl-call-level" style="--lvl:{s["color"]}">{s["label"]}{score}</div>{body}',
                 unsafe_allow_html=True,
             )
-            if st.button("Shown below" if is_selected else "Open call", key=f"view-{client_id}-{r['call_number']}",
-                         disabled=is_selected, type="tertiary"):
-                st.session_state.selected[client_id] = r["call_number"]
-                st.rerun()
+            st.button(
+                "\u200b",
+                key=f"view-{client_id}-{r['call_number']}",
+                disabled=is_selected,
+                type="tertiary",
+                on_click=select_call,
+                args=(client_id, r["call_number"]),
+            )
 
-fig = go.Figure()
-for y, lvl, text in ((YELLOW_LINE, "yellow", "Watch from 4"), (RED_LINE, "red", "Review from 8")):
-    fig.add_hline(y=y, line_dash="dot", line_width=1, line_color=LEVEL_STYLE[lvl]["color"],
-                  annotation_text=text, annotation_position="top left",
-                  annotation_font=dict(family=FONT, size=12, color=LEVEL_STYLE[lvl]["color"]))
-fig.add_trace(go.Scatter(
-    x=[f'Call {r["call_number"]}' for r in results],
-    y=[r["total"] for r in results],
-    text=[f'{nice_date(r["date"])}<br>' + (f'Score {r["total"]} of {MAX_SCORE}' if r["total"] is not None
-                                           else "Not analyzed") for r in results],
-    mode="lines+markers",
-    line=dict(color=INK, width=2),
-    marker=dict(size=12, color=[style_for(r["level"])["color"] for r in results], line=dict(width=2, color="white")),
-    hovertemplate="%{x}, %{text}<extra></extra>",
-))
-fig.update_layout(
-    height=210, margin=dict(l=0, r=0, t=16, b=0), showlegend=False,
-    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(family=FONT, size=13, color=GRAPHITE),
-    xaxis=dict(showgrid=False, linecolor=RULE),
-    yaxis=dict(range=[0, MAX_SCORE], dtick=4, gridcolor="rgba(213,219,228,0.6)", zeroline=False, title=None),
+score_rows = ""
+for r in results:
+    total = r["total"]
+    width = 0 if total is None else max(0, min(100, total / MAX_SCORE * 100))
+    score_text = "—" if total is None else f"{total}/{MAX_SCORE}"
+    style = style_for(r["level"])
+    selected_class = " selected" if r["call_number"] == selected["call_number"] else ""
+    score_rows += (
+        f'<div class="sl-score-row{selected_class}" style="--lvl:{style["color"]}">'
+        f'<div><div class="sl-score-call">Call {r["call_number"]}</div>'
+        f'<div class="sl-score-date">{nice_date(r["date"])}</div></div>'
+        f'<div class="sl-score-track"><div class="sl-score-fill" style="width:{width:.1f}%"></div></div>'
+        f'<div class="sl-score-value">{score_text}</div>'
+        f'<div class="sl-score-status">{style["label"]}</div></div>'
+    )
+
+st.markdown(
+    '<div class="sl-score-panel"><div class="sl-score-head">'
+    '<div class="sl-score-title">Score progression</div>'
+    f'<div class="sl-score-key"><b>Watch</b> {YELLOW_LINE}+ &nbsp; · &nbsp; '
+    f'<b>Review now</b> {RED_LINE}+</div></div>{score_rows}</div>',
+    unsafe_allow_html=True,
 )
-st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 # ---------- Evidence for the selected call + people ----------
 
+section_rule()
 detail_col, people_col = st.columns([3, 2], gap="large")
 
 with detail_col:
-    heading(f'What changed in Call {selected["call_number"]}', nice_date(selected["date"]))
+    heading(f'What changed in Call {selected["call_number"]}', nice_date(selected["date"]), "Evidence")
     if selected["level"] == "unavailable":
         reason = f' Reason: {selected["error"]}' if selected.get("error") else ""
         st.warning("Analysis unavailable, review manually. No level is shown for this call, so read the "
@@ -578,7 +677,7 @@ with detail_col:
                     unsafe_allow_html=True)
 
 with people_col:
-    heading(f"People {first_name(client)} mentions")
+    heading(f"People {first_name(client)} mentions", label="Context")
     hidden = {given_name(client["name"]).lower(), given_name(client["advisor"]).lower()}
     new_keys = {given_name(p).lower() for r in results for p in r.get("new_people") or []}
     names, display = [], {}
@@ -642,7 +741,9 @@ def decision_row(item_key, label, body, quoted=True):
 
 steps = selected.get("next_steps")
 if selected["level"] in ("yellow", "red") and steps:
-    heading("Suggested next steps", f"nothing is sent until {html.escape(client['advisor'])} approves it")
+    section_rule()
+    heading("Suggested next steps", f"nothing is sent until {html.escape(client['advisor'])} approves it",
+            "Actions")
     if steps.get("error"):
         st.caption(f"Drafting problem: {steps['error']}")
     if steps.get("advisor_script"):
@@ -658,10 +759,11 @@ if selected["level"] in ("yellow", "red") and steps:
 
 # ---------- Ask + manual notes ----------
 
+section_rule()
 ask_col, add_col = st.columns(2, gap="large")
 
 with ask_col:
-    heading(f"Ask about {first_name(client)}")
+    heading(f"Ask about {first_name(client)}", label="Advisor tools")
     with st.form(f"ask-{client_id}", clear_on_submit=True, border=False):
         question = st.text_input("Question", label_visibility="collapsed",
                                  placeholder=f"What changed in {first_name(client)}'s last call?")
@@ -684,7 +786,7 @@ with ask_col:
             st.caption(note)
 
 with add_col:
-    heading("Add a call without a note-taker")
+    heading("Add a call without a note-taker", label="Input")
     pasted = st.text_area("Transcript or typed notes", height=110, label_visibility="collapsed",
                           placeholder="Paste the transcript or type your call notes")
     if st.button("Analyze notes", disabled=not pasted.strip()):

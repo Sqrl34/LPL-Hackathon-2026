@@ -1,5 +1,4 @@
 boto3>=1.40
 streamlit>=1.40
-plotly>=5.24
 strands-agents>=1.0
 python-dotenv>=1.0
