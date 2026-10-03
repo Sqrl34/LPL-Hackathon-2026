@@ -38,6 +38,7 @@ LEVEL_STYLE = {
     "red": {"color": "#B33A32", "label": "Review now"},
     "unavailable": {"color": "#667985", "label": "Review manually"},
     "pending": {"color": "#667985", "label": "Not analyzed yet"},
+    "analyzing": {"color": "#667985", "label": "Analyzing"},
 }
 
 SIGNAL_LABELS = {
@@ -50,7 +51,7 @@ SIGNAL_LABELS = {
 
 # Lighter versions of the level colors, readable on the dark sidebar.
 SIDEBAR_LEVEL_COLOR = {"green": "#78D1BA", "yellow": "#F3C969", "red": "#FF9D94",
-                       "unavailable": "#B7C8D1", "pending": "#B7C8D1"}
+                       "unavailable": "#B7C8D1", "pending": "#B7C8D1", "analyzing": "#B7C8D1"}
 
 YELLOW_LINE, RED_LINE, MAX_SCORE = 4, 8, 15
 
@@ -224,6 +225,7 @@ st.session_state.setdefault("client_id", CLIENT_IDS[0])
 st.session_state.setdefault("use_live", True)
 st.session_state.setdefault("uploaded", {})          # mode -> client_id -> [{"call", "result", "people"}]
 st.session_state.setdefault("session_analysis", {})  # analyses with a failed call, kept for this session only
+st.session_state.setdefault("partial", {})           # store key -> in-progress analysis, so an interrupted run resumes
 st.session_state.setdefault("selected", {})          # client_id -> selected call_number
 st.session_state.setdefault("decisions", {})         # (client_id, call_number, item) -> "approved" | "dismissed"
 st.session_state.setdefault("answers", {})           # client_id -> (question, answer, kind, note)
@@ -232,7 +234,7 @@ st.session_state.setdefault("flash", "")
 
 # ---------- AWS status and data ----------
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def aws_status():
     """Which live pieces work right now. Cheap checks only, no model calls."""
     if not (config.SONNET_MODEL_ID and config.HAIKU_MODEL_ID):
@@ -244,7 +246,7 @@ def aws_status():
     return {"live": True, "s3": aws_clients.bucket_ready(), "why": ""}
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_history(client_id, use_s3):
     """Client file and past transcripts: S3 first, the local data/ copy if S3 can't be read."""
     if use_s3:
@@ -264,7 +266,21 @@ def analysis_store():
     return {}
 
 
-status = aws_status()
+@st.cache_resource
+def aws_warmup():
+    """Shared by every session: False until the first AWS check and S3 loads have filled the caches."""
+    return {"done": False}
+
+
+warm = aws_warmup()
+if warm["done"]:
+    status = aws_status()
+else:
+    # First visit after the server starts: draw from the local data/ copy with no network calls,
+    # then check AWS at the end of the script.
+    status = {"live": bool(config.SONNET_MODEL_ID and config.HAIKU_MODEL_ID), "s3": False,
+              "why": "", "checking": True}
+checking = status.get("checking", False)
 live = status["live"] and st.session_state.use_live
 mode = "live" if live else "sample"
 
@@ -295,31 +311,43 @@ def comprehend_people(calls):
         return None
 
 
-def ensure_analyzed(client_id):
-    state = base_state(client_id)
-    if state["results"] is not None:
-        return state
+def analyzing_result(call):
+    """Placeholder shown for a call while live analysis is still running."""
+    return {**scoring.unavailable_result(call), "level": "analyzing", "summary": "", "error": ""}
+
+
+def run_analysis(client_id, state, box, on_call_done=None):
+    """Score every call not scored yet, writing progress to box. Returns True if any call failed.
+
+    Progress is saved after each call, so a run that Streamlit interrupts (an advisor clicks
+    something mid-analysis) resumes from the last finished call instead of starting over.
+    """
     client, calls = state["client"], state["calls"]
-    with st.status(f"Analyzing {client['name']}'s {len(calls)} calls with Bedrock", expanded=True) as box:
-        people = comprehend_people(calls)
-        box.write("Found the people mentioned with Amazon Comprehend" if people is not None
-                  else "Comprehend unavailable, using the names Claude found")
-        results = []
-        for i, call in enumerate(calls):
-            box.write(f"Scoring Call {call['call_number']} against the calls before it")
-            results.append(scoring.analyze_new_call(client, calls[:i], results, call,
-                                                    people[: i + 1] if people else None))
-        failed = any(r["level"] == "unavailable" for r in results)
-        box.update(label="Some calls couldn't be analyzed" if failed else "Analysis complete",
-                   state="error" if failed else "complete")
-    entry = {"results": results, "people": people}
     key = store_key(client_id, calls, state["source"])
+    progress = st.session_state.partial.setdefault(key, {"results": [], "people": None, "people_done": False})
+    if not progress["people_done"]:
+        progress["people"] = comprehend_people(calls)
+        progress["people_done"] = True
+    people = progress["people"]
+    box.write("Found the people mentioned with Amazon Comprehend" if people is not None
+              else "Comprehend unavailable, using the names Claude found")
+    results = progress["results"]
+    for i in range(len(results), len(calls)):
+        call = calls[i]
+        box.write(f"Scoring Call {call['call_number']} against the calls before it")
+        result = scoring.analyze_new_call(client, calls[:i], results, call, people[: i + 1] if people else None)
+        results.append(result)
+        if on_call_done:
+            on_call_done(result)
+    failed = any(r["level"] == "unavailable" for r in results)
+    entry = {"results": list(results), "people": people}
     if failed:
         st.session_state.session_analysis[key] = entry  # retried only when someone clicks Re-run
     else:
         analysis_store()[key] = entry
+    st.session_state.partial.pop(key, None)
     state.update(entry)
-    return state
+    return failed
 
 
 def uploads(client_id):
@@ -484,14 +512,16 @@ def select_call(selected_client_id, call_number):
     st.session_state.selected[selected_client_id] = call_number
 
 
-# ---------- Load the open client (runs live analysis the first time) ----------
+# ---------- Load the open client (live analysis runs at the end of the script) ----------
 
-if st.session_state.pop("analyze_all", False):
-    for cid in CLIENT_IDS:
-        ensure_analyzed(cid)
-
+analyze_all = st.session_state.pop("analyze_all", False)
 client_id = st.session_state.client_id
-state = ensure_analyzed(client_id)
+state = base_state(client_id)
+analyzing = state["results"] is None
+if analyzing:
+    done = st.session_state.partial.get(store_key(client_id, state["calls"], state["source"]), {}).get("results", [])
+    state["results"] = list(done) + [analyzing_result(c) for c in state["calls"][len(done):]]
+busy = analyzing or checking
 client = state["client"]
 calls, results, people = full_history(state, client_id)
 selected_number = st.session_state.selected.get(client_id, results[-1]["call_number"])
@@ -522,20 +552,24 @@ with st.sidebar:
               help="Off: show the team's hand-written sample results without calling AWS.")
     if not status["live"]:
         st.caption(f"Live analysis is off. {status['why']}")
-    st.caption("Transcripts: " + (f"S3 bucket {config.S3_BUCKET}" if state["source"] == "s3" else "local files"))
+    if checking:
+        st.caption("Connecting to AWS…")
+    else:
+        st.caption("Transcripts: " + (f"S3 bucket {config.S3_BUCKET}" if state["source"] == "s3" else "local files"))
     if live:
-        if st.button("Analyze all clients", width="stretch",
+        if st.button("Analyze all clients", width="stretch", disabled=checking,
                      help="Runs Bedrock for any client not analyzed yet, so switching is instant."):
             st.session_state.analyze_all = True
             st.rerun()
-        if st.button(f"Re-run {first_name(client)}'s analysis", width="stretch",
+        if st.button(f"Re-run {first_name(client)}'s analysis", width="stretch", disabled=busy,
                      help="Scores this client's calls again with Bedrock."):
             key = store_key(client_id, state["calls"], state["source"])
             analysis_store().pop(key, None)
             st.session_state.session_analysis.pop(key, None)
+            st.session_state.partial.pop(key, None)
             load_history.clear()
             st.rerun()
-    if st.button("Reset demo", width="stretch",
+    if st.button("Reset demo", width="stretch", disabled=checking,
                  help="Removes calls received this session (and their S3 uploads) and clears approvals."):
         for key in ("uploaded", "selected", "decisions", "answers"):
             st.session_state[key] = {}
@@ -560,7 +594,9 @@ if not live:
             icon=":material/info:")
 
 latest_style = style_for(latest["level"])
-if latest["level"] == "unavailable":
+if analyzing:
+    standing = f'<b>{style_for("analyzing")["label"]}</b> · scoring {len(calls)} calls with Bedrock'
+elif latest["level"] == "unavailable":
     standing = (f'<b>{latest_style["label"]}</b> · Call {latest["call_number"]} on '
                 f'{nice_date(latest["date"])} couldn\'t be analyzed')
 else:
@@ -577,6 +613,7 @@ st.markdown(
     f'<br>{html.escape(client["notes"])}</div></div>',
     unsafe_allow_html=True,
 )
+progress_slot = st.empty()
 
 
 # ---------- New call from the note-taker ----------
@@ -589,7 +626,7 @@ if demo_call:
         msg_col.markdown(f"**{client['advisor']} just finished Call {demo_call['call_number']} with "
                          f"{first_name(client)}.** The note-taker has the transcript ready.")
         if btn_col.button(f"Receive Call {demo_call['call_number']} transcript", type="primary",
-                          key="receive", width="stretch"):
+                          key="receive", width="stretch", disabled=busy):
             receive_call(state, client_id, demo_call, from_note_taker=True)
 
 
@@ -602,25 +639,31 @@ selected_key = f"call-{client_id}-{selected['call_number']}"
 st.markdown(f"<style>.st-key-{selected_key} {{ border:2px solid {LOUPE} !important; }}</style>",
             unsafe_allow_html=True)
 
-cols = st.columns(len(results))
-for col, r in zip(cols, results):
+def call_card_html(r):
     s = style_for(r["level"])
-    is_selected = r["call_number"] == selected["call_number"]
     top = strongest(r)
-    if r["level"] == "unavailable":
+    if r["level"] == "analyzing":
+        body = '<div class="sl-quiet">Analyzing with Bedrock…</div>'
+        score = ""
+    elif r["level"] == "unavailable":
         body = '<div class="sl-quiet">Not analyzed. Read the transcript.</div>'
         score = ""
     else:
         body = (f'<div class="sl-call-quote">{mark(top["quote"], top["score"])}</div>' if top
                 else '<div class="sl-quiet">Nothing flagged.</div>')
         score = f'<span> · {r["total"]} of {MAX_SCORE}</span>'
+    return (f'<div class="sl-call-when">Call {r["call_number"]} · {nice_date(r["date"])}</div>'
+            f'<div class="sl-call-level" style="--lvl:{s["color"]}">{s["label"]}{score}</div>{body}')
+
+
+card_slots = {}
+cols = st.columns(len(results))
+for col, r in zip(cols, results):
+    is_selected = r["call_number"] == selected["call_number"]
     with col:
         with st.container(border=True, key=f"call-{client_id}-{r['call_number']}"):
-            st.markdown(
-                f'<div class="sl-call-when">Call {r["call_number"]} · {nice_date(r["date"])}</div>'
-                f'<div class="sl-call-level" style="--lvl:{s["color"]}">{s["label"]}{score}</div>{body}',
-                unsafe_allow_html=True,
-            )
+            card_slots[r["call_number"]] = st.empty()
+            card_slots[r["call_number"]].markdown(call_card_html(r), unsafe_allow_html=True)
             st.button(
                 "\u200b",
                 key=f"view-{client_id}-{r['call_number']}",
@@ -662,7 +705,9 @@ detail_col, people_col = st.columns([3, 2], gap="large")
 
 with detail_col:
     heading(f'What changed in Call {selected["call_number"]}', nice_date(selected["date"]), "Evidence")
-    if selected["level"] == "unavailable":
+    if selected["level"] == "analyzing":
+        st.markdown('<div class="sl-quiet">Analyzing this call…</div>', unsafe_allow_html=True)
+    elif selected["level"] == "unavailable":
         reason = f' Reason: {selected["error"]}' if selected.get("error") else ""
         st.warning("Analysis unavailable, review manually. No level is shown for this call, so read the "
                    f"transcript before acting.{reason}")
@@ -767,7 +812,7 @@ with ask_col:
     with st.form(f"ask-{client_id}", clear_on_submit=True, border=False):
         question = st.text_input("Question", label_visibility="collapsed",
                                  placeholder=f"What changed in {first_name(client)}'s last call?")
-        asked = st.form_submit_button("Ask")
+        asked = st.form_submit_button("Ask", disabled=busy)
     if asked and question.strip():
         with st.spinner("The Second Look agent is checking the calls (the guardrail checks the question and the answer)"):
             st.session_state.answers[client_id] = (
@@ -789,10 +834,47 @@ with add_col:
     heading("Add a call without a note-taker", label="Input")
     pasted = st.text_area("Transcript or typed notes", height=110, label_visibility="collapsed",
                           placeholder="Paste the transcript or type your call notes")
-    if st.button("Analyze notes", disabled=not pasted.strip()):
+    if st.button("Analyze notes", disabled=busy or not pasted.strip()):
         receive_call(state, client_id, {
             "client_id": client_id,
             "call_number": max(c["call_number"] for c in calls) + 1,
             "date": datetime.date.today().isoformat(),
             "transcript": pasted.strip(),
         }, from_note_taker=False)
+
+
+# ---------- AWS check and live analysis, after the page is drawn ----------
+
+if checking:
+    with progress_slot.container():
+        with st.status("Connecting to AWS…", expanded=False):
+            real = aws_status()
+            if real["s3"]:
+                for cid in CLIENT_IDS:
+                    load_history(cid, True)
+    warm["done"] = True
+    st.rerun()
+
+to_analyze = [client_id] if analyzing else []
+if analyze_all and live:
+    to_analyze += [cid for cid in CLIENT_IDS if cid != client_id and base_state(cid)["results"] is None]
+if to_analyze:
+    if len(to_analyze) == 1:
+        only = base_state(to_analyze[0])
+        label = f"Analyzing {only['client']['name']}'s {len(only['calls'])} calls with Bedrock"
+    else:
+        label = f"Analyzing {len(to_analyze)} clients with Bedrock"
+    with progress_slot.container():
+        with st.status(label, expanded=True) as box:
+            failed = False
+            for cid in to_analyze:
+                is_open = cid == client_id
+                cstate = state if is_open else base_state(cid)
+                if len(to_analyze) > 1:
+                    box.write(f"**{cstate['client']['name']}**")
+                on_done = (lambda r: card_slots[r["call_number"]].markdown(call_card_html(r), unsafe_allow_html=True)
+                           ) if is_open else None
+                failed = run_analysis(cid, cstate, box, on_done) or failed
+            box.update(label="Some calls couldn't be analyzed" if failed else "Analysis complete",
+                       state="error" if failed else "complete")
+    st.rerun()
