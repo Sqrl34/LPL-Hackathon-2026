@@ -126,12 +126,12 @@ if MODE == "live":
     assert calls_log["saved"] == [("walter", 4)], calls_log["saved"]
     print("ok  Call 4 saved to S3 uploads")
 
-at.text_input[0].input("Does Walter have dementia?")
+at.text_area[0].input("Does Walter have dementia?")
 at.button[[b.label for b in at.button].index("Ask")].click().run(); no_error("ask diagnosis question")
 assert at.error and ("cannot provide medical" in at.error[0].value.lower() or "can't assess medical" in at.error[0].value.lower()), text_of(at.error)
 print("ok  diagnosis question refused:", at.error[0].value[:60], "|", text_of(at.caption)[-80:])
 if MODE == "live":
-    at.text_input[0].input("Who is Daniel?")
+    at.text_area[0].input("Who is Daniel?")
     at.button[[b.label for b in at.button].index("Ask")].click().run(); no_error("ask normal question")
     assert "Daniel appears" in text_of(at.info), text_of(at.info)
     assert "Second Look agent" in text_of(at.caption) and "compare_to_baseline" in text_of(at.caption)
@@ -164,7 +164,7 @@ assert len(cards) == 4 and all("Steady" in c for c in cards), cards
 assert "Approve" not in labels(), "green client should have no next steps"
 print("ok  Linda: all 4 calls Steady, no next steps")
 
-at.text_area[0].input("Advisor: Hi Linda.\nLinda: Hello! The garden is lovely this year.").run()
+at.text_area[1].input("Advisor: Hi Linda.\nLinda: Hello! The garden is lovely this year.").run()
 at.button[labels().index("Analyze notes")].click().run(); no_error("paste notes")
 assert any("Analysis unavailable, review manually" in w.value for w in at.warning), text_of(at.warning)
 cards = [m.value for m in at.markdown if m.value.startswith("<div class=\"sl-call-when\"")]

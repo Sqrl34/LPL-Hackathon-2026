@@ -94,7 +94,18 @@ st.markdown(
                        padding:.2rem 0 .2rem .65rem; font-size:.8rem; font-weight:700; }}
       .sl-standing {{ font-size:.98rem; color:var(--ink); margin-top:.72rem; }}
       .sl-standing b {{ color:var(--lvl); }}
-      .sl-meta {{ color:var(--graphite); margin-top:.42rem; max-width:65rem; font-size:.9rem; line-height:1.55; }}
+      .sl-meta {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0;
+                  margin-top:1rem; border:1px solid var(--rule); background:#F8FAFB; }}
+      .sl-meta-item {{ min-width:0; padding:.72rem .85rem; border-right:1px solid var(--rule); }}
+      .sl-meta-item:last-child {{ border-right:0; }}
+      .sl-meta-label {{ display:block; color:var(--graphite); font-size:.66rem; font-weight:700;
+                        letter-spacing:.08em; line-height:1.2; text-transform:uppercase; }}
+      .sl-meta-value {{ display:block; color:var(--ink); font-size:.9rem; font-weight:650;
+                        line-height:1.35; margin-top:.22rem; overflow-wrap:anywhere; }}
+      .sl-client-note {{ display:grid; grid-template-columns:7rem 1fr; gap:.8rem; align-items:baseline;
+                         color:var(--graphite); font-size:.88rem; line-height:1.55;
+                         padding:.72rem .85rem; border:1px solid var(--rule); border-top:0; }}
+      .sl-client-note .sl-meta-label {{ color:var(--loupe); }}
       .sl-h {{ display:flex; align-items:baseline; flex-wrap:wrap; gap:.35rem .55rem;
                font-family:"Times New Roman",Times,serif; font-size:1.35rem; font-weight:700;
                color:var(--navy); background:#EEF4F7; border-left:3px solid var(--loupe);
@@ -104,6 +115,10 @@ st.markdown(
                            color:var(--loupe); margin-right:.15rem; }}
       .sl-h small {{ font-family:Arial,Helvetica,sans-serif; font-size:.8rem; font-weight:400;
                      color:var(--graphite); letter-spacing:0; }}
+      .sl-ai-badge {{ margin-left:auto; border:1px solid #9FC8E2; background:#fff; color:var(--loupe);
+                      border-radius:999px; padding:.28rem .52rem; font-family:Arial,Helvetica,sans-serif;
+                      font-size:.65rem; font-weight:700; letter-spacing:.04em; line-height:1;
+                      text-transform:uppercase; }}
       .sl-section-rule {{ height:1px; background:var(--rule); margin:2.2rem 0 .2rem; }}
       .sl-quiet {{ color:var(--graphite); }}
 
@@ -179,6 +194,10 @@ st.markdown(
       .sl-signal-quote {{ line-height:1.55; }}
       @media (max-width:640px) {{
         .sl-client-top {{ align-items:flex-start; flex-direction:column; }}
+        .sl-meta {{ grid-template-columns:1fr; }}
+        .sl-meta-item {{ border-right:0; border-bottom:1px solid var(--rule); }}
+        .sl-meta-item:last-child {{ border-bottom:0; }}
+        .sl-client-note {{ grid-template-columns:1fr; gap:.2rem; }}
         .sl-signal {{ grid-template-columns:1fr auto; row-gap:0.3rem; }}
         .sl-signal-quote {{ grid-column:1 / -1; }}
         .sl-name {{ font-size:2rem; }}
@@ -205,7 +224,7 @@ st.markdown(
       [data-testid="stSidebar"] {{ border-right:1px solid #28546C; }}
       [data-testid="stSidebar"] > div:first-child {{ padding-top:1.35rem; }}
       [data-testid="stSidebar"] .sl-wordmark {{ font-family:"Times New Roman",Times,serif;
-                                                font-weight:700; font-size:1.45rem; }}
+                                                font-weight:700; font-size:2rem; line-height:1.1; }}
       [data-testid="stSidebar"] [class*="st-key-pick-"] button {{ justify-content:flex-start;
           padding:.38rem .65rem; border-radius:.3rem; min-height:2.45rem; border-color:transparent; }}
       [data-testid="stSidebar"] [class*="st-key-pick-"] button > div {{ justify-content:flex-start; width:100%; }}
@@ -499,10 +518,11 @@ def given_name(name):
     return name.strip().split()[0].strip(".,()") if name and name.strip() else ""
 
 
-def heading(text, aside="", label=""):
+def heading(text, aside="", label="", badge=""):
     aside_html = f"<small>{aside}</small>" if aside else ""
     label_html = f'<span class="sl-section-label">{label}</span>' if label else ""
-    st.markdown(f'<div class="sl-h">{label_html}<span>{text}</span>{aside_html}</div>',
+    badge_html = f'<span class="sl-ai-badge">{badge}</span>' if badge else ""
+    st.markdown(f'<div class="sl-h">{label_html}<span>{text}</span>{aside_html}{badge_html}</div>',
                 unsafe_allow_html=True)
 
 
@@ -611,9 +631,15 @@ st.markdown(
     f'<div class="sl-name">{html.escape(client["name"])}</div></div>'
     f'<div class="sl-risk-pill">{latest_style["label"]}</div></div>'
     f'<div class="sl-standing">{standing}</div>'
-    f'<div class="sl-meta">Advisor {html.escape(client["advisor"])} &nbsp;·&nbsp; Trusted contact '
-    f'{html.escape(client["trusted_contact"])} &nbsp;·&nbsp; Age {client["age"]}'
-    f'<br>{html.escape(client["notes"])}</div></div>',
+    f'<div class="sl-meta">'
+    f'<div class="sl-meta-item"><span class="sl-meta-label">Advisor</span>'
+    f'<span class="sl-meta-value">{html.escape(client["advisor"])}</span></div>'
+    f'<div class="sl-meta-item"><span class="sl-meta-label">Trusted contact</span>'
+    f'<span class="sl-meta-value">{html.escape(client["trusted_contact"])}</span></div>'
+    f'<div class="sl-meta-item"><span class="sl-meta-label">Age</span>'
+    f'<span class="sl-meta-value">{client["age"]}</span></div></div>'
+    f'<div class="sl-client-note"><span class="sl-meta-label">Client profile</span>'
+    f'<span>{html.escape(client["notes"])}</span></div></div>',
     unsafe_allow_html=True,
 )
 progress_slot = st.empty()
@@ -815,27 +841,29 @@ section_rule()
 ask_col, add_col = st.columns(2, gap="large")
 
 with ask_col:
-    heading(f"Ask about {first_name(client)}", label="Advisor tools")
+    heading(f"Ask about {first_name(client)}", label="Advisor tools", badge="AI assistant")
+    conversation = st.container()
     with st.form(f"ask-{client_id}", clear_on_submit=True, border=False):
-        question = st.text_input("Question", label_visibility="collapsed",
-                                 placeholder=f"What changed in {first_name(client)}'s last call?")
+        question = st.text_area("Question", height=95, label_visibility="collapsed",
+                                placeholder=f"What changed in {first_name(client)}'s last call?")
         asked = st.form_submit_button("Ask", disabled=busy)
     if asked and question.strip():
         with st.spinner("The Second Look agent is checking the calls (the guardrail checks the question and the answer)"):
             st.session_state.answers[client_id] = (
                 question.strip(), *answer_question(client, calls, results, question.strip(), state["source"]))
     last = st.session_state.answers.get(client_id)
-    if last:
-        q, answer, kind, note = last
-        st.markdown(f"**You asked:** {html.escape(q)}")
-        if kind == "blocked":
-            st.error(answer, icon=":material/block:")
-        elif kind == "error":
-            st.warning(answer)
-        else:
-            st.info(answer)
-        if note:
-            st.caption(note)
+    with conversation:
+        if last:
+            q, answer, kind, note = last
+            st.markdown(f"**You asked:** {html.escape(q)}")
+            if kind == "blocked":
+                st.error(answer, icon=":material/block:")
+            elif kind == "error":
+                st.warning(answer)
+            else:
+                st.info(answer)
+            if note:
+                st.caption(note)
 
 with add_col:
     heading("Add a call without a note-taker", label="Input")
