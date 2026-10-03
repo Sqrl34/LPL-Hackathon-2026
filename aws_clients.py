@@ -19,6 +19,10 @@ class AWSServiceError(RuntimeError):
     """A safe, user-displayable failure from an AWS dependency."""
 
 
+class GuardrailBlocked(AWSServiceError):
+    """The Bedrock Guardrail blocked the request or the answer. The message is the guardrail's reply."""
+
+
 _bedrock_lock = threading.Lock()
 _last_bedrock_call = 0.0
 _clients: dict[str, Any] = {}
@@ -40,6 +44,25 @@ def _bucket() -> str:
     if not S3_BUCKET:
         raise AWSServiceError("S3_BUCKET is not configured; review manually.")
     return S3_BUCKET
+
+
+def caller_arn() -> str:
+    """Who the current AWS credentials belong to. Raises AWSServiceError if missing or expired."""
+    try:
+        return _boto3_client("sts").get_caller_identity()["Arn"]
+    except Exception as exc:
+        raise AWSServiceError("AWS credentials are missing or expired; paste fresh event credentials.") from exc
+
+
+def bucket_ready() -> bool:
+    """True if the configured bucket exists and these credentials can reach it."""
+    if not S3_BUCKET:
+        return False
+    try:
+        _boto3_client("s3").head_bucket(Bucket=S3_BUCKET)
+        return True
+    except Exception:
+        return False
 
 
 def _client_id(value: Any) -> str:
@@ -112,6 +135,24 @@ def save_upload(transcript: dict[str, Any]) -> str:
     return key
 
 
+def delete_uploads(client_ids: list[str]) -> int:
+    """Remove demo uploads so the live upload works fresh. Returns how many files were deleted."""
+    deleted = 0
+    try:
+        s3 = _boto3_client("s3")
+        for client_id in client_ids:
+            prefix = f"uploads/{_client_id(client_id)}/"
+            for page in s3.get_paginator("list_objects_v2").paginate(Bucket=_bucket(), Prefix=prefix):
+                for item in page.get("Contents", []):
+                    s3.delete_object(Bucket=_bucket(), Key=item["Key"])
+                    deleted += 1
+    except AWSServiceError:
+        raise
+    except Exception as exc:
+        raise AWSServiceError("Demo uploads could not be cleared; delete them in the S3 console.") from exc
+    return deleted
+
+
 def extract_people(text: str) -> list[str]:
     """Return unique Comprehend PERSON entities in their mention order."""
     if not isinstance(text, str) or not text.strip():
@@ -145,33 +186,89 @@ def _wait_for_bedrock_slot() -> None:
         _last_bedrock_call = time.monotonic()
 
 
-def converse(model_id: str, prompt: str, *, guardrail: bool = False, max_tokens: int = 1200) -> str:
-    """Call Bedrock Converse with global pacing and throttling backoff."""
-    if not model_id:
-        raise AWSServiceError("Bedrock model ID is not configured; review manually.")
-    if guardrail and not GUARDRAIL_ID:
-        raise AWSServiceError("Bedrock Guardrail is not configured; review manually.")
-    request: dict[str, Any] = {
-        "modelId": model_id,
-        "messages": [{"role": "user", "content": [{"text": prompt}]}],
-        "inferenceConfig": {"maxTokens": max_tokens, "temperature": 0},
-    }
-    if guardrail:
-        request["guardrailConfig"] = {"guardrailIdentifier": GUARDRAIL_ID, "guardrailVersion": GUARDRAIL_VERSION}
+_RETRYABLE = {"ThrottlingException", "ServiceUnavailableException", "ModelNotReadyException"}
+
+
+def _call_bedrock(method: str, request: dict[str, Any]) -> dict[str, Any]:
+    """Paced bedrock-runtime call with backoff on throttling."""
     for attempt in range(4):
         _wait_for_bedrock_slot()
         try:
-            response = _boto3_client("bedrock-runtime").converse(**request)
-            answer = "".join(part.get("text", "") for part in response.get("output", {}).get("message", {}).get("content", []))
-            if not answer:
-                raise AWSServiceError("Bedrock returned no usable analysis; review manually.")
-            return answer
+            return getattr(_boto3_client("bedrock-runtime"), method)(**request)
         except AWSServiceError:
             raise
         except Exception as exc:
             code = getattr(exc, "response", {}).get("Error", {}).get("Code", "")
-            if code in {"ThrottlingException", "ServiceUnavailableException", "ModelNotReadyException"} and attempt < 3:
+            if code in _RETRYABLE and attempt < 3:
                 time.sleep(2 ** attempt)
                 continue
             raise AWSServiceError("Analysis unavailable, review manually.") from exc
     raise AWSServiceError("Analysis unavailable, review manually.")
+
+
+def converse(model_id: str, prompt: str, *, system: str | None = None, guardrail: bool = False,
+             guard_text: str | None = None, max_tokens: int = 1200) -> str:
+    """Call Bedrock Converse with global pacing and throttling backoff.
+
+    guardrail=True runs the guardrail on the input and the answer. guard_text limits the
+    input check to that text (for example only the user's question, not the evidence
+    sent along with it). Raises GuardrailBlocked when the guardrail intervenes.
+    """
+    if not model_id:
+        raise AWSServiceError("Bedrock model ID is not configured; review manually.")
+    if guardrail and not GUARDRAIL_ID:
+        raise AWSServiceError("Bedrock Guardrail is not configured; review manually.")
+    content: list[dict[str, Any]] = [{"text": prompt}]
+    if guardrail and guard_text:
+        content.append({"guardContent": {"text": {"text": guard_text}}})
+    request: dict[str, Any] = {
+        "modelId": model_id,
+        "messages": [{"role": "user", "content": content}],
+        "inferenceConfig": {"maxTokens": max_tokens, "temperature": 0},
+    }
+    if system:
+        request["system"] = [{"text": system}]
+    if guardrail:
+        request["guardrailConfig"] = {"guardrailIdentifier": GUARDRAIL_ID, "guardrailVersion": GUARDRAIL_VERSION}
+    response = _call_bedrock("converse", request)
+    answer = "".join(part.get("text", "") for part in response.get("output", {}).get("message", {}).get("content", []))
+    if response.get("stopReason") == "guardrail_intervened":
+        raise GuardrailBlocked(answer or "Blocked by the guardrail.")
+    if not answer:
+        raise AWSServiceError("Bedrock returned no usable analysis; review manually.")
+    return answer
+
+
+def _has_block(value: Any) -> bool:
+    """True if any guardrail assessment entry says BLOCKED (masking alone is ANONYMIZED)."""
+    if isinstance(value, dict):
+        return value.get("action") == "BLOCKED" or any(_has_block(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_block(v) for v in value)
+    return False
+
+
+_SPLIT = "\n<<<SL-NEXT>>>\n"
+
+
+def check_output(texts: list[str]) -> tuple[list[str], bool]:
+    """Run model-written text through the guardrail as OUTPUT, in one call.
+
+    Returns (texts with sensitive numbers masked, blocked). Used for scoring summaries and
+    drafts, so transcripts sent to the model are never blocked as input.
+    """
+    if not GUARDRAIL_ID or not any(texts):
+        return texts, False
+    response = _call_bedrock("apply_guardrail", {
+        "guardrailIdentifier": GUARDRAIL_ID,
+        "guardrailVersion": GUARDRAIL_VERSION,
+        "source": "OUTPUT",
+        "content": [{"text": {"text": _SPLIT.join(texts)}}],
+    })
+    if response.get("action") != "GUARDRAIL_INTERVENED":
+        return texts, False
+    if _has_block(response.get("assessments", [])):
+        return texts, True
+    masked = "".join(o.get("text", "") for o in response.get("outputs", []))
+    parts = masked.split(_SPLIT)
+    return (parts, False) if len(parts) == len(texts) else (texts, False)

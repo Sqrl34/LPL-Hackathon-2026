@@ -38,12 +38,12 @@ RUBRIC_PROMPT = """You are reviewing a financial advisor's call transcript with 
 Compare the NEW call to the client's PAST calls.
 Do not name, suggest, or speculate about any medical or mental health condition. Describe only observable behavior.
 Score each of these 5 signals from 0 (none) to 3 (strong), based only on changes compared to the client's own past behavior:
-- repetition: repeating the same question or story within this call. Ignore asking once for something to be explained again.
+- repetition: repeating the same question or story within this call. Ignore asking once for something to be explained again. 1 = repeats something but notices or corrects it right away; 2 = asks the same question again within minutes without noticing; 3 = repeats the same question or story three or more times.
 - memory_gaps: contradicting or forgetting decisions recorded in past calls, or not recognizing long-known people. Ignore forgetting exact dates.
-- new_influencer: a person not mentioned in past calls who now appears and shapes financial decisions. A new name mentioned once in passing scores 0.
+- new_influencer: a person who was not part of the client's life in the first (baseline) call and now shapes financial decisions. Keep scoring that person in every later call where their influence continues, even if they were already mentioned in an earlier call. A new name mentioned once in passing scores 0. 1 = a new person comes up more than once but has no opinions about the client's money; 2 = a new person is giving opinions or advice about the client's money or strategy, even if the client hasn't acted on it yet; 3 = a new person is directing specific money moves, handling the client's bills or accounts, or would receive money.
 - out_of_character: requests that clash with the client's history and style, such as speculative investments, adding someone to the account or as beneficiary, or unusually large withdrawals. Changes with a clear normal reason (like a home repair paid to their own account) score 0 or 1.
 - urgency_secrecy: pressure to act fast, or asking to hide things from family or the trusted contact. Normal deadlines like a tax bill score 0.
-For every score above 0, include a short direct quote copied exactly, word for word, from the CLIENT's lines in the NEW call as evidence. For a score of 0, use an empty quote.
+For every score above 0, include a short direct quote copied exactly, word for word, from the CLIENT's lines in the NEW call as evidence. Copy one continuous passage; do not join separate sentences with "...". For a score of 0, use an empty quote.
 Also list the first names of every person mentioned in the NEW call (including the advisor).
 Return only JSON, no other text, in this format:
 {"signals": {"repetition": {"score": 0, "quote": ""}, "memory_gaps": {"score": 0, "quote": ""}, "new_influencer": {"score": 0, "quote": ""}, "out_of_character": {"score": 0, "quote": ""}, "urgency_secrecy": {"score": 0, "quote": ""}}, "people_mentioned": [], "summary": "One or two plain-language sentences on what changed versus past calls."}"""
@@ -60,9 +60,11 @@ Return only JSON, no other text: {"advisor_script": "", "trusted_contact_message
 # ---------- Bedrock access ----------
 
 try:
+    from aws_clients import check_output as _shared_check_output
     from aws_clients import converse as _shared_converse
 except ImportError:
     _shared_converse = None
+    _shared_check_output = None
 
 _bedrock = None
 _last_call = 0.0
@@ -111,8 +113,24 @@ def converse(model_id, system, prompt, guardrail=False):
     if not model_id:
         raise RuntimeError("Model ID missing; set SONNET_MODEL_ID / HAIKU_MODEL_ID in .env")
     if _shared_converse is not None:
-        return _shared_converse(model_id, system, prompt, guardrail=guardrail)
+        return _shared_converse(model_id, prompt, system=system, guardrail=guardrail and bool(config.GUARDRAIL_ID),
+                                max_tokens=1500)
     return _local_converse(model_id, system, prompt, guardrail=guardrail)
+
+
+def guard_output(texts):
+    """Check model-written text with the guardrail (as OUTPUT). Returns (texts, blocked).
+
+    Transcripts go to the model without an input guardrail, so a client's own words can't
+    get the analysis blocked. What the model writes back is what we check. If the guardrail
+    can't be reached, the text falls back to the local diagnosis-word scrub.
+    """
+    if not config.GUARDRAIL_ID or _shared_check_output is None:
+        return texts, False
+    try:
+        return _shared_check_output(texts)
+    except Exception:
+        return texts, False
 
 
 # ---------- Helpers ----------
@@ -130,18 +148,32 @@ def _normalize(text):
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
+_ELLIPSIS = re.compile(r"\s*(?:\[\s*(?:\.\s*){2,}\]|\.{3,}|…)\s*")
+_SPEAKER = re.compile(r"^\s*[A-Za-z][\w .'-]{0,30}:\s*")  # "Maria: " at the start of a line
+
+
 def quote_in_transcript(quote, transcript):
     """True if the quote really appears in the transcript.
 
     Guardrail PII masking can turn part of a quote into a {PLACEHOLDER}, so
     placeholders match any text.
     """
-    q = _normalize(quote).strip(" \"'.").rstrip(".")
-    if not q:
+    # A quote stitched together with "..." passes only if every piece is in the
+    # transcript, in order. Pieces can't be reordered or invented.
+    fragments = [f.strip(" \"'.,") for f in _ELLIPSIS.split(_normalize(quote))]
+    fragments = [f for f in fragments if f]
+    if not fragments:
         return False
-    parts = [re.escape(p) for p in re.split(r"\{[a-z_]+\}", q)]
-    pattern = r".+?".join(parts)
-    return re.search(pattern, _normalize(transcript)) is not None
+    pattern = r".+?".join(
+        r".+?".join(re.escape(p) for p in re.split(r"\{[a-z_]+\}", f)) for f in fragments
+    )
+    # Also match against the client's lines alone, so a quote spanning two client
+    # lines with an advisor line in between still counts. Every word must be theirs.
+    client_only = " ".join(
+        _SPEAKER.sub("", line) for line in transcript.splitlines()
+        if line.strip() and not line.lower().lstrip().startswith("advisor:")
+    )
+    return any(re.search(pattern, _normalize(text)) for text in (transcript, client_only))
 
 
 def _scrub(text):
@@ -230,12 +262,16 @@ def build_score_prompt(new_call, past_calls, client):
 def _converse_json(model_id, system, prompt):
     """One retry if the model's reply isn't valid JSON."""
     try:
-        return _parse_json(converse(model_id, system, prompt, guardrail=True))
+        return _parse_json(converse(model_id, system, prompt))
     except ValueError:  # includes json.JSONDecodeError
-        return _parse_json(converse(model_id, system, prompt + "\n\nReturn only the JSON object.", guardrail=True))
+        return _parse_json(converse(model_id, system, prompt + "\n\nReturn only the JSON object."))
 
 
 def friendly_error(err):
+    # aws_clients wraps boto errors; the original (with its error code) is the cause.
+    if not hasattr(err, "response") and getattr(err, "__cause__", None) is not None:
+        if hasattr(err.__cause__, "response") or type(err.__cause__).__name__.endswith("CredentialsError"):
+            err = err.__cause__
     code = ""
     if hasattr(err, "response"):
         code = err.response.get("Error", {}).get("Code", "")
@@ -263,6 +299,7 @@ def score_call(new_call, past_calls, client):
     raw = _converse_json(config.SONNET_MODEL_ID, RUBRIC_PROMPT, prompt)
 
     signals = {}
+    unverified = []  # scores dropped because the quote isn't in the transcript (shown by run_scoring.py)
     for name in SIGNALS:
         item = (raw.get("signals") or {}).get(name) or {}
         try:
@@ -271,16 +308,30 @@ def score_call(new_call, past_calls, client):
             score = 0
         quote = (item.get("quote") or "").strip()
         if score > 0 and not quote_in_transcript(quote, new_call["transcript"]):
+            unverified.append({"signal": name, "score": score, "quote": quote})
             score, quote = 0, ""
         if score == 0:
             quote = ""
         signals[name] = {"score": score, "quote": quote}
 
     people = [p for p in raw.get("people_mentioned") or [] if isinstance(p, str) and p.strip()]
+    summary = _scrub((raw.get("summary") or "").strip())
+
+    # Guardrail on what the model wrote: masks account numbers/SSNs, blocks diagnosis talk.
+    flagged = [name for name in SIGNALS if signals[name]["score"] > 0]
+    checked, blocked = guard_output([summary] + [signals[name]["quote"] for name in flagged])
+    if blocked:
+        summary = NEUTRAL_LINE
+    else:
+        summary = checked[0]
+        for name, quote in zip(flagged, checked[1:]):
+            signals[name]["quote"] = quote
+
     return {
         "signals": signals,
         "people_mentioned": people,
-        "summary": _scrub((raw.get("summary") or "").strip()),
+        "summary": summary,
+        "unverified_quotes": unverified,
     }
 
 
@@ -359,6 +410,16 @@ def draft_next_steps(result, client, transcript=""):
         steps["trusted_contact_message"] = _scrub(raw.get("trusted_contact_message"))
     if moving:
         steps["hold_note"] = _scrub(raw.get("hold_note"))
+
+    keys = [k for k in ("advisor_script", "trusted_contact_message", "hold_note") if steps[k]]
+    checked, blocked = guard_output([steps[k] for k in keys])
+    if blocked:
+        steps.update({"advisor_script": "Drafts unavailable, write the follow-up manually.",
+                      "trusted_contact_message": None, "hold_note": None,
+                      "error": "The guardrail blocked the drafted text."})
+        return steps
+    for key, text in zip(keys, checked):
+        steps[key] = text
     return steps
 
 
@@ -391,6 +452,7 @@ def analyze_new_call(client, past_calls, past_results, new_call, people_by_call=
         "level": level,
         "summary": scored["summary"],
         "next_steps": None,
+        "unverified_quotes": scored.get("unverified_quotes", []),
     }
     if with_next_steps:
         result["next_steps"] = draft_next_steps(result, client, new_call["transcript"])

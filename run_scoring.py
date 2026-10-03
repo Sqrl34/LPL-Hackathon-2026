@@ -54,6 +54,8 @@ def print_results(results):
         for s in SIGNALS:
             if r["signals"][s]["score"]:
                 print(f"  {s}: \"{r['signals'][s]['quote']}\"")
+        for u in r.get("unverified_quotes") or []:
+            print(f"  DROPPED {u['signal']} (model said {u['score']}/3, quote not in transcript): \"{u['quote']}\"")
         if r.get("new_people"):
             print(f"  new people: {', '.join(r['new_people'])}")
         steps = r.get("next_steps")
@@ -265,6 +267,7 @@ def main():
     if args.mock:
         import mock_bedrock
         scoring.converse = mock_bedrock.fake_converse
+        scoring.guard_output = lambda texts: (texts, False)
         print("(MOCK Bedrock: replaying sample_results.json, not real scoring)\n")
     elif not check_credentials():
         sys.exit(1)

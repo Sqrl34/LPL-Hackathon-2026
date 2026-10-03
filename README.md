@@ -39,7 +39,7 @@ new = scoring.analyze_new_call(client, calls, results, call_4)   # live upload
 - If Bedrock or parsing fails, the result has `level: "unavailable"`, `total: None` and the summary "Analysis unavailable, review manually". It never comes back green.
 - Optional `people_by_call`: a list of Comprehend name lists, one per call in order. Without it, the names the model returns are used. `scoring.recurring_new_people(...)` lists new names that show up in 2 or more calls.
 - `scoring.apply_rules(signals, prior_results)` is pure Python with no AWS calls. Thresholds and the 2-call yellow rule are constants at the top of `scoring.py`.
-- **For C:** `scoring.py` uses `aws_clients.converse(model_id, system, prompt, guardrail=False) -> str` once it exists. Until then it uses its own paced boto3 fallback.
+- **For C:** `scoring.py` calls `aws_clients.converse(model_id, prompt, system=..., guardrail=False)` and `aws_clients.check_output(texts)` for the output guardrail. If `aws_clients` can't be imported, it falls back to its own paced boto3 calls.
 - **For B:** `data/sample_results.json` has hand-written results for every call (`walter`, `maria`, `linda`, plus `walter_demo_call_4`), so you can build the screen without Bedrock.
 
 On Windows, run Python as `py`. Full flag list: `py run_scoring.py -h`.
@@ -82,7 +82,19 @@ Troubleshooting: if you see `ExpiredToken`, paste fresh credentials. If you see 
 aws s3 sync data/clients s3://$S3_BUCKET/clients --region us-east-1
 aws s3 sync data/transcripts s3://$S3_BUCKET/transcripts --region us-east-1
 ```
-Before presenting, delete `uploads/walter/call-4.json` from the bucket.
+Before presenting, delete `uploads/walter/call-4.json` from the bucket (the screen's **Reset demo** button does this).
+
+No AWS CLI? The same setup in Python, with credentials exported in the terminal:
+```bash
+python aws_setup.py --upload-data second-look-lpl-432810293903   # clients/ and transcripts/, not data/demo
+python aws_setup.py --guardrail                                   # creates or reuses SecondLookSafety, prints GUARDRAIL_ID
+```
+
+## Screen (B): how it uses AWS
+- **Live mode** (credentials and model IDs set): transcripts load from S3 (falling back to `data/` if S3 can't be read), Comprehend finds the people mentioned, and `scoring.py` scores each call. Results are cached in memory, so a refresh doesn't call Bedrock again. **Receive Call 4 transcript** saves to `uploads/` in S3, then scores the call. **Ask** goes through the guardrail, which checks only the question on input and checks the whole answer.
+- **Guardrail placement:** transcripts are sent to Sonnet *without* an input guardrail, so a client's own words can't get their analysis blocked. What the model writes (summaries, quotes, drafts) is checked as OUTPUT with `ApplyGuardrail`, which blocks diagnosis talk and masks account numbers and SSNs.
+- **Without AWS** the screen shows `data/sample_results.json`, with a banner saying these are hand-written sample results. The sidebar toggle switches between the two.
+- **Before presenting:** click **Analyze all clients** once so switching clients is instant. A first run is about 30 Bedrock calls, paced at about one per second.
 
 ## Rules
 - Made-up data only. Private S3 bucket only. No AWS keys in code.
